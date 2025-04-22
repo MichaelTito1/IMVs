@@ -16,18 +16,23 @@ done
 2. Verify that tables are now imported: `mydb-# \dt`
 3. Import the data:
 ```
-COPY customer FROM '/tpch/TPC-H V3.0.1/dbgen/customer.csv' WITH (FORMAT csv, DELIMITER '|');
-COPY lineitem FROM '/tpch/TPC-H V3.0.1/dbgen/lineitem.csv' WITH (FORMAT csv, DELIMITER '|');
-COPY nation FROM '/tpch/TPC-H V3.0.1/dbgen/nation.csv' WITH (FORMAT csv, DELIMITER '|');
-COPY orders FROM '/tpch/TPC-H V3.0.1/dbgen/orders.csv' WITH (FORMAT csv, DELIMITER '|');
-COPY part FROM '/tpch/TPC-H V3.0.1/dbgen/part.csv' WITH (FORMAT csv, DELIMITER '|');
-COPY partsupp FROM '/tpch/TPC-H V3.0.1/dbgen/partsupp.csv' WITH (FORMAT csv, DELIMITER '|');
-COPY region FROM '/tpch/TPC-H V3.0.1/dbgen/region.csv' WITH (FORMAT csv, DELIMITER '|');
-COPY supplier FROM '/tpch/TPC-H V3.0.1/dbgen/supplier.csv' WITH (FORMAT csv, DELIMITER '|');
+COPY customer FROM '/tpch/TPCH-V3.0.1/dbgen/customer.csv' WITH (FORMAT csv, DELIMITER '|');
+COPY lineitem FROM '/tpch/TPCH-V3.0.1/dbgen/lineitem.csv' WITH (FORMAT csv, DELIMITER '|');
+COPY nation FROM '/tpch/TPCH-V3.0.1/dbgen/nation.csv' WITH (FORMAT csv, DELIMITER '|');
+COPY orders FROM '/tpch/TPCH-V3.0.1/dbgen/orders.csv' WITH (FORMAT csv, DELIMITER '|');
+COPY part FROM '/tpch/TPCH-V3.0.1/dbgen/part.csv' WITH (FORMAT csv, DELIMITER '|');
+COPY partsupp FROM '/tpch/TPCH-V3.0.1/dbgen/partsupp.csv' WITH (FORMAT csv, DELIMITER '|');
+COPY region FROM '/tpch/TPCH-V3.0.1/dbgen/region.csv' WITH (FORMAT csv, DELIMITER '|');
+COPY supplier FROM '/tpch/TPCH-V3.0.1/dbgen/supplier.csv' WITH (FORMAT csv, DELIMITER '|');
 ```
 
-# Next Steps
+# Creating write SQL statements
 1. Using the write workload generator, create write workload. 
+    > maybe use TPC-H refresh functions? RF1 for INSERT and RF2 for DELETE?
+    `./tpch/TPCH-V3.0.1/dbgen/dbgen -s 1 -U 1`
+    `python ./scripts/tpch-refresh-to-sql.py --update-dir /mnt/d/TU-Darmstadt/4/IMVs/tpch/TPCH-V3.0.1/dbgen --stream 1 --output refresh1.sql`
+
+# Next Steps
 4. Without IVM Measure execution time of read and write operations.
 5. Create IVM on the tables. For example:
 `SELECT pgivm.create_immv('immv_query1', '$$YOUR_SIMPLE_TPCH_QUERY_HERE$$');`
