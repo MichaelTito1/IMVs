@@ -1,3 +1,6 @@
 pgdata/
 tpch/
+/scripts/.*
+/scripts/write_exec_times_explain.csv
 TPC-H-Tool.zip
+./refresh*.sql
