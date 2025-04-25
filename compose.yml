@@ -11,3 +11,20 @@ services:
     volumes:
       - ./pgdata:/var/lib/postgresql/data
       - ./tpch:/tpch
+
+  bench:
+    build:
+      context: .
+      dockerfile: Dockerfile.bench
+    depends_on:
+      - postgres
+    # so it can reach the DB by service name
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: myuser
+      PGPASSWORD: mypassword
+      PGDATABASE: mydb
+    volumes:
+      - ./scripts:/app/scripts
+      - ./refresh1.sql:/app/refresh1.sql
