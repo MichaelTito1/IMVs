@@ -56,7 +56,7 @@ def process_delete(file_path, output_file):
     with open(file_path, 'r') as f:
         print(f"-- RF2: Processing deletes from {os.path.basename(file_path)}", file=output_file)
         for line in f:
-            orderkey = line.strip()
+            orderkey = line.strip().replace('|', '')
             if orderkey:
                 # Delete from LINEITEM first (foreign key constraint)
                 sql_lineitem = f"DELETE FROM LINEITEM WHERE L_ORDERKEY = {orderkey};"
