@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 import psycopg2
-from psycopg2 import OperationalError
-import time
 import csv
 import re
 import sys
 import os
+import argparse
+from utils import wait_for_postgres
 
 # ────────── Configuration ──────────
 DB_PARAMS = {
@@ -20,20 +20,6 @@ OUTPUT_CSV = 'write_exec_times_explain.csv'
 MAX_RETRIES = 30
 RETRY_INTERVAL = 1.0  # seconds
 # ───────────────────────────────────
-
-def wait_for_postgres():
-    """Keep trying to connect until Postgres is ready or we hit max retries."""
-    for i in range(1, MAX_RETRIES+1):
-        try:
-            conn = psycopg2.connect(**DB_PARAMS)
-            conn.close()
-            print(f"Postgres is up (after {i} attempt{'s' if i>1 else ''})")
-            return
-        except OperationalError:
-            print(f"Waiting for Postgres… ({i}/{MAX_RETRIES})", file=sys.stderr)
-            time.sleep(RETRY_INTERVAL)
-    print(f"ERROR: could not connect to Postgres after {MAX_RETRIES} attempts", file=sys.stderr)
-    sys.exit(1)
 
 def extract_execution_time(plan_text):
     """
@@ -53,8 +39,16 @@ def extract_execution_time(plan_text):
     return None
 
 def main():
+    # add argument for OUTPUT_CSV file path including name
+    global OUTPUT_CSV
+    parser = argparse.ArgumentParser(description='Run EXPLAIN ANALYZE on SQL statements and save results to CSV.')
+    parser.add_argument('--output', type=str, default=OUTPUT_CSV, help='Output CSV file path')
+    args = parser.parse_args()
+    OUTPUT_CSV = args.output if args.output else OUTPUT_CSV
+
     # Connect to Postgres
-    wait_for_postgres()
+    wait_for_postgres(DB_PARAMS, retries=MAX_RETRIES, interval=RETRY_INTERVAL)
+    print("Postgres is up, proceeding with EXPLAIN ANALYZE...")
     try:
         conn = psycopg2.connect(**DB_PARAMS)
     except Exception as e:
@@ -82,13 +76,25 @@ def main():
                     stmt = ' '.join(buffer)
                     buffer.clear()
 
-                    # Wrap in EXPLAIN ANALYZE
+                    # If this is a transaction control, run it _as is_
+                    ctl = stripped.upper()
+                    if ctl in ('BEGIN;', 'BEGIN TRANSACTION;', 'COMMIT;'):
+                        try:
+                            cur.execute(stmt)
+                            writer.writerow([stmt, '', 'OK'])
+                            print(f"[OK]          \t{stmt}")
+                        except Exception as e:
+                            conn.rollback()
+                            writer.writerow([stmt, '', f"ERROR: {e}"])
+                            print(f"[ERROR]       \t{stmt}")
+                        continue
+
+                    # Otherwise wrap in EXPLAIN ANALYZE
                     explain_sql = f"EXPLAIN (ANALYZE, BUFFERS) {stmt}"
                     try:
                         cur.execute(explain_sql)
-                        # Collect plan rows
                         plan_rows = cur.fetchall()
-                        plan_text = "\n".join(row[0] for row in plan_rows)
+                        plan_text = "\n".join(r[0] for r in plan_rows)
                         exec_time = extract_execution_time(plan_text)
                         status = 'OK'
                     except Exception as e:
@@ -96,9 +102,8 @@ def main():
                         exec_time = None
                         status = f"ERROR: {e}"
 
-                    # Log to CSV
-                    writer.writerow([stmt, exec_time if exec_time is not None else '', status])
-                    print(f"[{status}] {exec_time if exec_time is not None else 'N/A'} ms\t{stmt[:60]}...")
+                    writer.writerow([stmt, exec_time if exec_time else '', status])
+                    print(f"[{status}] {exec_time if exec_time else 'N/A'} ms\t{stmt[:60]}...")
 
     cur.close()
     conn.close()
