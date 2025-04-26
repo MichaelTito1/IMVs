@@ -1,6 +1,7 @@
 pgdata/
 tpch/
+/scripts/__pycache__/
 /scripts/.*
-/scripts/write_exec_times_explain.csv
+/scripts/*.csv
 TPC-H-Tool.zip
-./refresh*.sql
+refresh*.sql

@@ -26,13 +26,29 @@ COPY region FROM '/tpch/TPCH-V3.0.1/dbgen/region.csv' WITH (FORMAT csv, DELIMITE
 COPY supplier FROM '/tpch/TPCH-V3.0.1/dbgen/supplier.csv' WITH (FORMAT csv, DELIMITER '|');
 ```
 
-# Creating write SQL statements
+# Collecting data about effect of IMVs on write performance 
+## Creating write SQL statements
 1. Using the write workload generator, create write workload. 
-    > maybe use TPC-H refresh functions? RF1 for INSERT and RF2 for DELETE?
-    `./tpch/TPCH-V3.0.1/dbgen/dbgen -s 1 -U 1`
-    `python ./scripts/tpch-refresh-to-sql.py --update-dir /mnt/d/TU-Darmstadt/4/IMVs/tpch/TPCH-V3.0.1/dbgen --stream 1 --output refresh1.sql`
+    > maybe use TPC-H refresh functions? RF1 for INSERT and RF2 for DELETE? Run the following:
+    In powershell: `./tpch/TPCH-V3.0.1/dbgen/dbgen -s 1 -U 1`
+    In WSL: `python ./scripts/tpch-refresh-to-sql.py --update-dir /mnt/d/TU-Darmstadt/4/IMVs/tpch/TPCH-V3.0.1/dbgen --stream 1 --output refresh1.sql`
 
-# Next Steps
+## Running Write SQL statements and collecting metrics:
+1. go inside `bench` container, and do:
+> `python3 /app/scripts/collect-metrics.py`
+
+## Managing IMV for all tables in the database:
+```
+# To create one IMV per table:
+python manage-imvs.py create
+
+# To drop them again:
+python manage-imvs.py drop
+```
+
+After creating IMVs, rerun the write SQL statements
+
+# Next Steps [PENDING REVIEW]
 4. Without IVM Measure execution time of read and write operations.
 5. Create IVM on the tables. For example:
 `SELECT pgivm.create_immv('immv_query1', '$$YOUR_SIMPLE_TPCH_QUERY_HERE$$');`
