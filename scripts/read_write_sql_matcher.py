@@ -1,7 +1,10 @@
 import re
 import argparse
-from typing import Set, List, Dict, Tuple
-from collections import defaultdict
+import csv
+import gc
+import time
+from typing import Set, List, Dict, Iterator, Tuple
+from collections import defaultdict, Counter
 
 def extract_tables_from_select(sql_statement: str) -> Set[str]:
     """Extract table names from SELECT statements."""
@@ -13,8 +16,7 @@ def extract_tables_from_select(sql_statement: str) -> Set[str]:
     tables = set()
     
     # Pattern to match FROM and JOIN clauses
-    # This handles: FROM table, JOIN table, LEFT JOIN table, etc.
-    from_pattern = r'\b(?:FROM|JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|INNER\s+JOIN|OUTER\s+JOIN|FULL\s+JOIN)\s+([^\s,()]+)'
+    from_pattern = r'\b(?:FROM|JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|INNER\s+JOIN|OUTER\s+JOIN|FULL\s+JOIN|CROSS\s+JOIN)\s+([^\s,()]+)'
     matches = re.findall(from_pattern, sql, re.IGNORECASE)
     
     for match in matches:
@@ -22,7 +24,10 @@ def extract_tables_from_select(sql_statement: str) -> Set[str]:
         table_name = match.split('.')[-1].strip()
         # Remove quotes if present
         table_name = table_name.strip('"\'`[]')
-        if table_name and not table_name.upper() in ('ON', 'WHERE', 'GROUP', 'ORDER', 'HAVING', 'LIMIT'):
+        # Remove _{shardNumber} suffix if present
+        table_name = re.sub(r'_\d+$', '', table_name)
+        
+        if table_name and not table_name.upper() in ('ON', 'WHERE', 'GROUP', 'ORDER', 'HAVING', 'LIMIT', 'UNION', 'SELECT'):
             tables.add(table_name.lower())
     
     return tables
@@ -55,7 +60,7 @@ def extract_tables_from_write(sql_statement: str) -> Set[str]:
         table_name = match.split('.')[-1].strip()
         # Remove quotes if present
         table_name = table_name.strip('"\'`[]')
-        # remove _{shardNumber} suffix if present
+        # Remove _{shardNumber} suffix if present
         table_name = re.sub(r'_\d+$', '', table_name)
 
         if table_name:
@@ -67,128 +72,318 @@ def extract_tables_from_write(sql_statement: str) -> Set[str]:
     
     return tables
 
-def read_sql_file(filename: str) -> List[str]:
-    """Read SQL file and return list of non-empty statements."""
+def count_statements(filename: str) -> int:
+    """Count total statements in file."""
     try:
         with open(filename, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
+            content = f.read()
         
-        # Filter out empty lines and strip whitespace
-        statements = [line.strip() for line in lines if line.strip()]
-        return statements
-    except FileNotFoundError:
-        print(f"Error: File '{filename}' not found.")
-        return []
+        if ';' in content:
+            statements = [stmt.strip() for stmt in content.split(';') if stmt.strip()]
+        else:
+            statements = [line.strip() for line in content.split('\n') if line.strip()]
+            
+        return len(statements)
+    except Exception as e:
+        print(f"Error counting statements in {filename}: {e}")
+        return 0
+
+def read_sql_statements(filename: str) -> Iterator[Tuple[int, str]]:
+    """Generator that yields (index, statement) tuples to save memory."""
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        if ';' in content:
+            statements = [stmt.strip() for stmt in content.split(';') if stmt.strip()]
+        else:
+            statements = [line.strip() for line in content.split('\n') if line.strip()]
+            
+        for idx, stmt in enumerate(statements):
+            yield idx, stmt
+            
     except Exception as e:
         print(f"Error reading file '{filename}': {e}")
-        return []
-
-def match_statements(select_file: str, write_file: str) -> Dict[str, List[str]]:
-    """Match write statements with relevant select statements."""
-    
-    read_stmts = read_sql_file(select_file)
-    write_stmts = read_sql_file(write_file)
-
-    print(f"Found {len(read_stmts)} SELECT statements and {len(write_stmts)} WRITE statements.")
-    print("first 5 SELECT statements:")
-    for i, stmt in enumerate(read_stmts[:5]):
-        print(f"{i}: {stmt[:100]}{'...' if len(stmt) > 100 else ''}")
-    print()
-    print("first 5 WRITE statements:")
-    for i, stmt in enumerate(write_stmts[:5]):
-        print(f"{i}: {stmt[:100]}{'...' if len(stmt) > 100 else ''}")
-    print()
-
-    readStmtIdx2tables = defaultdict(list)
-    for idx, stmt in enumerate(read_stmts):
-        tables = extract_tables_from_select(stmt)
-        readStmtIdx2tables[idx] = tables
-    
-    writeStmtIdx2tables = defaultdict(list)
-    for idx, stmt in enumerate(write_stmts):
-        tables = extract_tables_from_write(stmt)
-        writeStmtIdx2tables[idx] = tables
-    
-    table2readStmtIdx = defaultdict(list)
-    for idx, tables in readStmtIdx2tables.items():
-        for table in tables:
-            table2readStmtIdx[table].append(idx)
-
-    table2WriteStmtIdx = defaultdict(list)
-    for idx, tables in writeStmtIdx2tables.items():
-        for table in tables:
-            table2WriteStmtIdx[table].append(idx)
-
-    matches = []
-    seen_pairs = set()
-    for table, read_indices in table2readStmtIdx.items():
-        if table not in table2WriteStmtIdx:
-            continue
-        
-        for read_idx in read_indices:
-            for write_idx in table2WriteStmtIdx[table]:
-                if (write_idx, read_idx) in seen_pairs:
-                    continue
-                seen_pairs.add((write_idx, read_idx))
-                
-                common_tables = set(readStmtIdx2tables[read_idx]) & set(writeStmtIdx2tables[write_idx])
-                if common_tables:
-                    matches.append({
-                        'write_index': write_idx,
-                        'write_statement': write_stmts[write_idx],
-                        'read_index': read_idx,
-                        'read_statement': read_stmts[read_idx],
-                        'common_tables': sorted(common_tables)
-                    })
-
-    return matches
-
-def print_matches(matches: Dict[str, List[str]]):
-    """Print the matching results in a readable format."""
-    if not matches:
-        print("No matches found between write and select statements.")
         return
-    
-    print("\n" + "="*80)
-    print("MATCHING RESULTS")
-    print("="*80)
-    
-    for match in matches:
-        write_idx = match['write_index']
-        read_idx = match['read_index']
-        common_tables_str = ", ".join(sorted(match['common_tables']))
-        
-        print(f"\nWRITE {write_idx}:")
-        print("-" * (len(f"WRITE {write_idx}:") + 1))
-        print(f"  → SELECT {read_idx} (common tables: {common_tables_str})")
-        print(f"    {match['write_statement'][:100]}{'...' if len(match['write_statement']) > 100 else ''}")
-        print(f"    {match['read_statement'][:100]}{'...' if len(match['read_statement']) > 100 else ''}")
 
+class WriteStatementIndex:
+    """Class to manage write statement indexing with proper data integrity."""
+    
+    def __init__(self, max_writes_per_table: int = 100):
+        self.max_writes_per_table = max_writes_per_table
+        self.table_to_writes = defaultdict(list)  # table -> list of write_ids
+        self.write_data = {}  # write_id -> {'statement': str, 'tables': set}
+        self.table_write_counts = defaultdict(int)
+    
+    def add_write_statement(self, write_id: int, statement: str, tables: Set[str]) -> bool:
+        """Add a write statement to the index. Returns True if added, False if skipped."""
+        if not tables:
+            return False
+        
+        # Store the write statement data
+        self.write_data[write_id] = {
+            'statement': statement,
+            'tables': tables
+        }
+        
+        # Add to table index only if under limit
+        added_to_any_table = False
+        for table in tables:
+            if self.table_write_counts[table] < self.max_writes_per_table:
+                self.table_to_writes[table].append(write_id)
+                self.table_write_counts[table] += 1
+                added_to_any_table = True
+        
+        return added_to_any_table
+    
+    def get_writes_for_table(self, table: str) -> List[int]:
+        """Get write statement IDs for a given table."""
+        return self.table_to_writes.get(table, [])
+    
+    def get_write_data(self, write_id: int) -> Dict:
+        """Get write statement data by ID."""
+        return self.write_data.get(write_id, {'statement': '', 'tables': set()})
+    
+    def get_stats(self) -> Dict:
+        """Get statistics about the index."""
+        return {
+            'total_writes': len(self.write_data),
+            'indexed_writes': sum(len(writes) for writes in self.table_to_writes.values()),
+            'unique_tables': len(self.table_to_writes),
+            'table_counts': dict(self.table_write_counts)
+        }
+
+def build_write_index_smart(write_file: str, max_writes_per_table: int = 100) -> WriteStatementIndex:
+    """Build a SMART index that limits writes per table to prevent explosion."""
+    print("Building smart write statement index...")
+    
+    index = WriteStatementIndex(max_writes_per_table)
+    total_writes = count_statements(write_file)
+    print(f"Total WRITE statements: {total_writes}")
+    
+    count = 0
+    added_count = 0
+    
+    for write_idx, write_stmt in read_sql_statements(write_file):
+        tables = extract_tables_from_write(write_stmt)
+        if index.add_write_statement(write_idx, write_stmt, tables):
+            added_count += 1
+        
+        count += 1
+        if count % 2000 == 0:
+            print(f"  Processed {count}/{total_writes} WRITE statements, indexed {added_count}...")
+    
+    stats = index.get_stats()
+    print(f"Indexed {stats['total_writes']} WRITE statements")
+    print(f"Table distribution (limited to {max_writes_per_table} writes per table):")
+    for table, count in sorted(stats['table_counts'].items()):
+        print(f"  {table}: {count} writes")
+    
+    return index
+
+def process_with_limits(select_file: str, write_file: str, 
+                       max_writes_per_table: int = 100,
+                       max_matches_per_select: int = 50,
+                       max_total_matches: int = 100000) -> None:
+    """Process with strict limits to prevent explosion."""
+    
+    total_selects = count_statements(select_file)
+    print(f"Total SELECT statements: {total_selects}")
+    
+    # Build the write statement index with limits
+    write_index = build_write_index_smart(write_file, max_writes_per_table)
+    
+    print(f"\nProcessing SELECT statements with limits:")
+    print(f"  Max writes per table: {max_writes_per_table}")
+    print(f"  Max matches per SELECT: {max_matches_per_select}")
+    print(f"  Max total matches: {max_total_matches}")
+    
+    # Open output file
+    output_file = 'matches.csv'
+    with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+        fieldnames = ['select_id', 'select_statement', 'select_tables', 
+                     'write_id', 'write_statement', 'write_tables', 'common_tables']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        total_matches = 0
+        processed_selects = 0
+        start_time = time.time()
+        
+        # Process SELECT statements
+        for select_idx, select_stmt in read_sql_statements(select_file):
+            if total_matches >= max_total_matches:
+                print(f"Reached maximum total matches ({max_total_matches}). Stopping.")
+                break
+                
+            select_tables = extract_tables_from_select(select_stmt)
+            
+            if select_tables:
+                matches_for_this_select = 0
+                batch_matches = []
+                processed_pairs = set()
+                
+                # Find matching write statements with limits
+                for table in select_tables:
+                    if matches_for_this_select >= max_matches_per_select:
+                        break
+                    
+                    write_ids = write_index.get_writes_for_table(table)
+                    for write_id in write_ids:
+                        if matches_for_this_select >= max_matches_per_select:
+                            break
+                            
+                        pair_key = (select_idx, write_id)
+                        if pair_key not in processed_pairs:
+                            write_data = write_index.get_write_data(write_id)
+                            write_stmt = write_data['statement']
+                            write_tables = write_data['tables']
+                            common_tables = select_tables & write_tables
+                            
+                            if common_tables:
+                                match = {
+                                    'select_id': select_idx,
+                                    'select_statement': select_stmt[:500] + '...' if len(select_stmt) > 500 else select_stmt,
+                                    'select_tables': ';'.join(sorted(select_tables)),
+                                    'write_id': write_id,
+                                    'write_statement': write_stmt[:500] + '...' if len(write_stmt) > 500 else write_stmt,
+                                    'write_tables': ';'.join(sorted(write_tables)),
+                                    'common_tables': ';'.join(sorted(common_tables)),
+                                }
+                                batch_matches.append(match)
+                                processed_pairs.add(pair_key)
+                                matches_for_this_select += 1
+                
+                # Write matches for this SELECT
+                if batch_matches:
+                    writer.writerows(batch_matches)
+                    total_matches += len(batch_matches)
+            
+            processed_selects += 1
+            
+            # Progress update
+            if processed_selects % 1000 == 0:
+                elapsed = time.time() - start_time
+                rate = processed_selects / elapsed
+                eta = (total_selects - processed_selects) / rate if rate > 0 else 0
+                print(f"  Processed {processed_selects}/{total_selects} SELECT statements, "
+                      f"found {total_matches} matches, "
+                      f"ETA: {eta:.1f}s")
+                
+                # Periodic garbage collection
+                gc.collect()
+    
+    elapsed = time.time() - start_time
+    print(f"\n=== FINAL SUMMARY ===")
+    print(f"Total SELECT statements processed: {processed_selects}")
+    print(f"Total matches found: {total_matches}")
+    print(f"Processing time: {elapsed:.1f} seconds")
+    print(f"Results saved to: {output_file}")
+    
+    if total_matches >= max_total_matches:
+        print(f"\nWARNING: Hit maximum match limit ({max_total_matches}). "
+              f"Increase --max-total-matches if you need more results.")
+
+def quick_analysis(select_file: str, write_file: str) -> None:
+    """Quick analysis of the files."""
+    print("=== QUICK ANALYSIS ===")
+    
+    # Count total statements
+    total_selects = count_statements(select_file)
+    total_writes = count_statements(write_file)
+    print(f"Total SELECT statements: {total_selects}")
+    print(f"Total WRITE statements: {total_writes}")
+    
+    # Sample first few statements
+    print("\nFirst 3 SELECT statements:")
+    for i, (idx, stmt) in enumerate(read_sql_statements(select_file)):
+        if i >= 3:
+            break
+        print(f"  {idx}: {stmt[:100]}{'...' if len(stmt) > 100 else ''}")
+    
+    print("\nFirst 3 WRITE statements:")
+    for i, (idx, stmt) in enumerate(read_sql_statements(write_file)):
+        if i >= 3:
+            break
+        print(f"  {idx}: {stmt[:100]}{'...' if len(stmt) > 100 else ''}")
+    
+    # Analyze table distribution
+    select_table_counts = Counter()
+    write_table_counts = Counter()
+    
+    sample_size = 1000
+    print(f"\nAnalyzing table distribution (sample of {sample_size} statements each)...")
+    
+    for i, (idx, stmt) in enumerate(read_sql_statements(select_file)):
+        if i >= sample_size:
+            break
+        tables = extract_tables_from_select(stmt)
+        for table in tables:
+            select_table_counts[table] += 1
+    
+    for i, (idx, stmt) in enumerate(read_sql_statements(write_file)):
+        if i >= sample_size:
+            break
+        tables = extract_tables_from_write(stmt)
+        for table in tables:
+            write_table_counts[table] += 1
+    
+    common_tables = set(select_table_counts.keys()) & set(write_table_counts.keys())
+    
+    print(f"SELECT table frequency (top 10):")
+    for table, count in select_table_counts.most_common(10):
+        print(f"  {table}: {count}")
+    
+    print(f"WRITE table frequency (top 10):")
+    for table, count in write_table_counts.most_common(10):
+        print(f"  {table}: {count}")
+    
+    print(f"Common tables: {len(common_tables)}")
+    print(f"Common tables: {sorted(common_tables)}")
+    
+    # Estimate potential matches
+    if common_tables:
+        avg_select_per_table = sum(select_table_counts[t] for t in common_tables) / len(common_tables)
+        avg_write_per_table = sum(write_table_counts[t] for t in common_tables) / len(common_tables)
+        estimated_matches = avg_select_per_table * avg_write_per_table * len(common_tables)
+        print(f"Estimated matches (rough): {estimated_matches:.0f}")
+        
+        if estimated_matches > 1000000:
+            print("WARNING: Very high number of potential matches. Use strict limits!")
 
 def main():
-    parser = argparse.ArgumentParser(description='Match SQL write statements with relevant select statements')
-    parser.add_argument('--select_file', help='File containing SELECT statements')
-    parser.add_argument('--write_file', help='File containing INSERT/UPDATE/DELETE statements')
+    parser = argparse.ArgumentParser(description='Match SQL statements with smart limits')
+    parser.add_argument('--select_file', required=True, help='File containing SELECT statements')
+    parser.add_argument('--write_file', required=True, help='File containing INSERT/UPDATE/DELETE statements')
+    parser.add_argument('--max-writes-per-table', type=int, default=20, 
+                       help='Max write statements per table (default: 20)')
+    parser.add_argument('--max-matches-per-select', type=int, default=20, 
+                       help='Max matches per SELECT statement (default: 20)')
+    parser.add_argument('--max-total-matches', type=int, default=50000, 
+                       help='Max total matches to find (default: 50000)')
+    parser.add_argument('--analysis-only', action='store_true', 
+                       help='Only run analysis, do not process matches')
     
     args = parser.parse_args()
     
-    print(f"Analyzing files:")
-    print(f"  SELECT statements: {args.select_file}")
-    print(f"  WRITE statements: {args.write_file}")
+    print(f"SQL Statement Matcher (Smart Limits)")
+    print(f"====================================")
+    print(f"SELECT file: {args.select_file}")
+    print(f"WRITE file:  {args.write_file}")
     print()
     
-    matches = match_statements(args.select_file, args.write_file)
+    quick_analysis(args.select_file, args.write_file)
     
-    print(f"\nSummary: Found {len(matches)} matches between write statements and select statements.")
-
-    # save matches to a file
-    if not matches:
-        print("No matches found. No output file created.")
-        return
-    with open('matches.csv', 'w', encoding='utf-8') as f:
-        f.write("write_index,write_statement,read_index,read_statement,common_tables\n")
-        for match in matches:
-            f.write(f"{match['write_index']},{match['write_statement']},{match['read_index']},{match['read_statement']},{';'.join(match['common_tables'])}\n")
+    if not args.analysis_only:
+        print(f"\nStarting processing with limits:")
+        print(f"  Max writes per table: {args.max_writes_per_table}")
+        print(f"  Max matches per SELECT: {args.max_matches_per_select}")
+        print(f"  Max total matches: {args.max_total_matches}")
+        
+        process_with_limits(args.select_file, args.write_file,
+                          args.max_writes_per_table,
+                          args.max_matches_per_select,
+                          args.max_total_matches)
 
 if __name__ == "__main__":
     main()
