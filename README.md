@@ -54,3 +54,14 @@ After creating IMVs, rerun the write SQL statements
 `SELECT pgivm.create_immv('immv_query1', '$$YOUR_SIMPLE_TPCH_QUERY_HERE$$');`
 6. With IVM Measure execution time of read and write operations.
 7. Write scripts to automate aggregation of execution times
+
+# generating read workload:
+- download needed dataset files from cluster
+- generate workload 
+> `python src/ldb_wlgenerator/generate_workload.py --data_dir /mnt/d/TU-Darmstadt/4/data/baseball --dataset_statistics_dir /mnt/d/TU-Darmstadt/4/data/baseball/database_statistics/ --workload_dir /mnt/d/TU-Darmstadt/4/data/baseball/workloads/`
+
+# generating write workload:
+- from queryPotter, run `python workload_gen/setup.py`
+
+- From this repo, run `read_write_sql_matcher.py` as follows to get ~100k rows with 5 writes per select statement:
+`python scripts/read_write_sql_matcher.py --write_file ../data/baseball/write_workload.sql --select_file ../data/baseball/workloads/baseball_scaled10/imv_test_workload.sql --max-writes-per-table 10 --max-matches-per-select 5 --max-total-matches 100000`
