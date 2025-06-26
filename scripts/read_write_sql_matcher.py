@@ -198,12 +198,12 @@ def process_with_limits(select_file: str, write_file: str,
     print(f"  Max matches per SELECT: {max_matches_per_select}")
     print(f"  Max total matches: {max_total_matches}")
     
-    # Open output file
+    # Open output file with explicit encoding and proper CSV settings
     output_file = 'matches.csv'
     with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
         fieldnames = ['select_id', 'select_statement', 'select_tables', 
                      'write_id', 'write_statement', 'write_tables', 'common_tables']
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames, quoting=csv.QUOTE_ALL)
         writer.writeheader()
         
         total_matches = 0
@@ -238,26 +238,45 @@ def process_with_limits(select_file: str, write_file: str,
                             write_data = write_index.get_write_data(write_id)
                             write_stmt = write_data['statement']
                             write_tables = write_data['tables']
+                            
+                            # Debug: Validate write data integrity
+                            if not write_stmt or not write_tables:
+                                print(f"Warning: Invalid write data for write_id {write_id}")
+                                print(f"  Statement: {repr(write_stmt[:100])}")
+                                print(f"  Tables: {write_tables}")
+                                continue
+                            
                             common_tables = select_tables & write_tables
                             
                             if common_tables:
+                                # Ensure all values are properly formatted and not None
+                                truncated_select = select_stmt[:500] + '...' if len(select_stmt) > 500 else select_stmt
+                                truncated_write = write_stmt[:500] + '...' if len(write_stmt) > 500 else write_stmt
+                                
                                 match = {
-                                    'select_id': select_idx,
-                                    'select_statement': select_stmt[:500] + '...' if len(select_stmt) > 500 else select_stmt,
+                                    'select_id': str(select_idx),
+                                    'select_statement': truncated_select.replace('\n', ' ').replace('\r', ''),
                                     'select_tables': ';'.join(sorted(select_tables)),
-                                    'write_id': write_id,
-                                    'write_statement': write_stmt[:500] + '...' if len(write_stmt) > 500 else write_stmt,
+                                    'write_id': str(write_id),
+                                    'write_statement': truncated_write.replace('\n', ' ').replace('\r', ''),
                                     'write_tables': ';'.join(sorted(write_tables)),
                                     'common_tables': ';'.join(sorted(common_tables)),
                                 }
+                                
                                 batch_matches.append(match)
                                 processed_pairs.add(pair_key)
                                 matches_for_this_select += 1
                 
-                # Write matches for this SELECT
+                # Write matches for this SELECT one by one to ensure data integrity
                 if batch_matches:
-                    writer.writerows(batch_matches)
-                    total_matches += len(batch_matches)
+                    for match in batch_matches:
+                        # Validate that all required fields are present and properly formatted
+                        if all(key in match and match[key] is not None for key in fieldnames):
+                            writer.writerow(match)
+                            total_matches += 1
+                        else:
+                            print(f"Warning: Skipping invalid match for select_id {select_idx}")
+                            print(f"Match data: {match}")
             
             processed_selects += 1
             
