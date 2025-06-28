@@ -201,8 +201,8 @@ def process_with_limits(select_file: str, write_file: str,
     # Open output file with explicit encoding and proper CSV settings
     output_file = 'matches.csv'
     with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ['select_id', 'select_statement', 'select_tables', 
-                     'write_id', 'write_statement', 'write_tables', 'common_tables']
+        fieldnames = ['select_id', 'select_tables', 
+                     'write_id', 'write_tables', 'common_tables']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames, quoting=csv.QUOTE_ALL)
         writer.writeheader()
         
@@ -255,10 +255,10 @@ def process_with_limits(select_file: str, write_file: str,
                                 
                                 match = {
                                     'select_id': str(select_idx),
-                                    'select_statement': truncated_select.replace('\n', ' ').replace('\r', ''),
+                                    # 'select_statement': truncated_select.replace('\n', ' ').replace('\r', ''),
                                     'select_tables': ';'.join(sorted(select_tables)),
                                     'write_id': str(write_id),
-                                    'write_statement': truncated_write.replace('\n', ' ').replace('\r', ''),
+                                    # 'write_statement': truncated_write.replace('\n', ' ').replace('\r', ''),
                                     'write_tables': ';'.join(sorted(write_tables)),
                                     'common_tables': ';'.join(sorted(common_tables)),
                                 }
