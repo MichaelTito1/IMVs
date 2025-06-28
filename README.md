@@ -48,6 +48,31 @@ python manage-imvs.py drop
 
 After creating IMVs, rerun the write SQL statements
 
+# How to configure PostgreSQL to capture execution plans of IMV triggers?
+[source](https://chatgpt.com/share/6860535e-88d8-800b-9a72-44f8c97207fa). Use the `auto_explain` extension with nested-statement logging:
+
+1. **Load and configure** (in `postgresql.conf` or per-session)
+
+   ```sql
+   -- make sure auto_explain is in shared_preload_libraries
+   shared_preload_libraries = 'auto_explain'
+   ```
+2. **Session settings** (or in `postgresql.conf`)
+
+   ```sql
+   -- log every plan
+   SET auto_explain.log_min_duration = 0;                 
+   -- include actual times
+   SET auto_explain.log_analyze     = true;              
+   -- show the full plan
+   SET auto_explain.log_verbose     = true;              
+   -- **key**: log nested statements (inside functions/triggers)
+   SET auto_explain.log_nested_statements = true;        
+   -- send log output to your client (psql) rather than to server log
+   SET client_min_messages = log;                        
+   ```
+3. **Run your INSERT** as usual. 
+
 # Next Steps [PENDING REVIEW]
 4. Without IVM Measure execution time of read and write operations.
 5. Create IVM on the tables. For example:
