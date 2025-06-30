@@ -2,29 +2,14 @@ services:
   postgres:
     build: .
     environment:
-      POSTGRES_USER: myuser
-      POSTGRES_PASSWORD: mypassword
-      POSTGRES_DB: mydb
+      PGUSER: myuser
+      PGPASSWORD: mypassword
+      PGDATABASE: baseball
+      PGHOST: localhost
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
     volumes:
       - ./pgdata:/var/lib/postgresql/data
-      - ./tpch:/tpch
-
-  bench:
-    build:
-      context: .
-      dockerfile: Dockerfile.bench
-    depends_on:
-      - postgres
-    # so it can reach the DB by service name
-    environment:
-      PGHOST: postgres
-      PGPORT: 5432
-      PGUSER: myuser
-      PGPASSWORD: mypassword
-      PGDATABASE: mydb
-    volumes:
+      - ./data:/app/data
       - ./scripts:/app/scripts
-      - ./refresh1.sql:/app/refresh1.sql
