@@ -90,3 +90,10 @@ After creating IMVs, rerun the write SQL statements
 
 - From this repo, run `read_write_sql_matcher.py` as follows to get ~100k rows with 5 writes per select statement:
 `python scripts/read_write_sql_matcher.py --write_file ../data/baseball/write_workload.sql --select_file ../data/baseball/workloads/baseball_scaled10/imv_test_workload.sql --max-writes-per-table 10 --max-matches-per-select 5 --max-total-matches 100000`
+
+# how to create baseball DB on PG and import the data:
+0. make sure that `norm_tables/` directory contains the csv table files, and that it and `modified_schema.sql` file are in `./data` directory.
+1. run the docker container `docker compose build && docker compose up`
+2. Enter the container bash terminal `docker compose exec -it imvs-postgres-1 bash`
+3. Run the script: `python3 /apps/scripts/create_import_database.py`
+
