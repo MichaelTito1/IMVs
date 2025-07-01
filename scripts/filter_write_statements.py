@@ -20,27 +20,28 @@ def parse_args():
                        help='Output format: csv (default) or sql statements only')
     return parser.parse_args()
 
-def remove_table_suffixes(sql_statement):
+def remove_table_suffixes(sql: str) -> str:
     """
-    Remove _{number} suffixes from table names in SQL statements.
-    
-    Args:
-        sql_statement (str): The SQL statement containing table names with suffixes
-        
-    Returns:
-        str: The SQL statement with suffixes removed from table names
+    Remove _{number} suffixes from table names (quoted or unquoted)
+    in SQL statements.
     """
-    # Pattern to match table names with suffixes like "table_0", "table_123", etc.
-    # This looks for quoted table names followed by _digits
-    pattern = r'"([a-zA-Z_][a-zA-Z0-9_]*)_\d+"'
-    
-    # Replace with just the table name without the suffix
-    def replacement(match):
-        table_name = match.group(1)  # Get the table name without the suffix
-        return f'"{table_name}"'
-    
-    cleaned_sql = re.sub(pattern, replacement, sql_statement)
-    return cleaned_sql
+    # This pattern matches:
+    #  - an optional surrounding quote (`"`)
+    #  - a valid SQL identifier (letters, digits, underscore, not starting with digit)
+    #  - an underscore + one or more digits
+    #  - the same optional surrounding quote
+    # We replace the whole match with just the identifier part (group 'name'),
+    # dropping the '_digits'.
+    pattern = re.compile(
+        r'''(?P<quote>")?
+            (?P<name>[A-Za-z_][A-Za-z0-9_]*?)
+            _\d+
+            (?P=quote)?
+        ''',
+        flags=re.VERBOSE
+    )
+    return pattern.sub(lambda m: f'{m.group("quote") or ""}{m.group("name")}{m.group("quote") or ""}',
+                       sql)
 
 def filter_write_statements(input_file, output_file, output_format='csv'):
     """Filter write statements from the workload CSV file."""
