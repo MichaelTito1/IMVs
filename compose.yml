@@ -13,3 +13,21 @@ services:
       - ./pgdata:/var/lib/postgresql/data
       - ./data:/app/data
       - ./scripts:/app/scripts
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=auto_explain
+      - -c
+      - auto_explain.log_min_duration=0
+      - -c
+      - auto_explain.log_analyze=on
+      - -c
+      - auto_explain.log_verbose=on
+      - -c
+      - auto_explain.log_nested_statements=on
+      - -c
+      - auto_explain.log_triggers=on
+      - -c
+      - auto_explain.log_buffers=on
+      - -c
+      - client_min_messages=log
