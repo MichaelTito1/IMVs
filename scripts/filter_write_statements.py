@@ -9,15 +9,38 @@ import csv
 import argparse
 import os
 from datetime import datetime
+import re
 
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Filter write statements from workload.csv.')
-    parser.add_argument('--input', default='data/workload.csv', help='Input workload CSV file')
-    parser.add_argument('--output', default='data/write_statements.csv', help='Output file for write statements')
+    parser.add_argument('--input', default='/app/data/workload.csv', help='Input workload CSV file')
+    parser.add_argument('--output', default='/app/data/write_statements.csv', help='Output file for write statements')
     parser.add_argument('--format', choices=['csv', 'sql'], default='csv', 
                        help='Output format: csv (default) or sql statements only')
     return parser.parse_args()
+
+def remove_table_suffixes(sql_statement):
+    """
+    Remove _{number} suffixes from table names in SQL statements.
+    
+    Args:
+        sql_statement (str): The SQL statement containing table names with suffixes
+        
+    Returns:
+        str: The SQL statement with suffixes removed from table names
+    """
+    # Pattern to match table names with suffixes like "table_0", "table_123", etc.
+    # This looks for quoted table names followed by _digits
+    pattern = r'"([a-zA-Z_][a-zA-Z0-9_]*)_\d+"'
+    
+    # Replace with just the table name without the suffix
+    def replacement(match):
+        table_name = match.group(1)  # Get the table name without the suffix
+        return f'"{table_name}"'
+    
+    cleaned_sql = re.sub(pattern, replacement, sql_statement)
+    return cleaned_sql
 
 def filter_write_statements(input_file, output_file, output_format='csv'):
     """Filter write statements from the workload CSV file."""
@@ -38,6 +61,14 @@ def filter_write_statements(input_file, output_file, output_format='csv'):
     
     print(f"Found {len(write_statements)} write statements:")
     
+    # Clean SQL statements and remove table suffixes
+    for stmt in write_statements:
+        sql = stmt.get('sql', '').strip()
+        if sql:
+            # Remove table suffixes
+            cleaned_sql = remove_table_suffixes(sql)
+            stmt['sql'] = cleaned_sql
+
     # Count by type
     type_counts = {}
     for stmt in write_statements:
@@ -75,9 +106,9 @@ def write_csv_output(write_statements, output_file):
 def write_sql_output(write_statements, output_file):
     """Write only the SQL statements to a text file."""
     with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(f"-- Write statements extracted from workload.csv\n")
-        f.write(f"-- Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"-- Total statements: {len(write_statements)}\n\n")
+        # f.write(f"-- Write statements extracted from workload.csv\n")
+        # f.write(f"-- Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        # f.write(f"-- Total statements: {len(write_statements)}\n\n")
         
         current_type = None
         for i, stmt in enumerate(write_statements):
@@ -85,11 +116,11 @@ def write_sql_output(write_statements, output_file):
             sql = stmt.get('sql', '').strip()
             
             if current_type != query_type:
-                f.write(f"\n-- {query_type} STATEMENTS\n")
+                # f.write(f"\n-- {query_type} STATEMENTS\n")
                 current_type = query_type
             
-            f.write(f"-- Statement {i+1}: Query ID {stmt.get('query_id', 'N/A')}\n")
-            f.write(f"{sql}\n\n")
+            # f.write(f"-- Statement {i+1}: Query ID {stmt.get('query_id', 'N/A')}\n")
+            f.write(f"{sql}\n")
 
 def main():
     args = parse_args()
