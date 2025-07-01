@@ -1,107 +1,146 @@
+#!/usr/bin/env python3
+"""
+PostgreSQL Benchmarking Script
+Compares performance of basic queries, materialized views, and incremental materialized views (pg_ivm)
+"""
+
+"""
+1. connect to PostgreSQL database
+2. (?) warmup the database by simple SELECT queries
+3. Each select statement is an experiment. For each select statement:
+    a. basic setup: no IMVs, no triggers. 
+        - execute the select statement and collect execution times and plans.
+        - Execute the write statements and collect execution times and plans.
+        - rollback the changes.
+    c. Materialized View setup: 
+        - create materialized view for the select statement
+        - execute the select statement and collect execution times and plans.
+        - execute the write statements and collect execution times and plans. 
+        - Refresh the materialized view after each write statement. Collect execution times.
+    d. Incremental View Maintenance setup:
+        - create immv for the select statement using the pg_ivm extension,
+        - execute the select statement and collect execution times and plans.
+        - execute the write statements and collect execution times and trigger plans of the immv.
+        - rollback the changes.
+4. Save the results in a CSV file.
+5. Close the database connection.
+"""
+
 import argparse
 import os
-from typing import Iterator, Tuple
+from typing import List
 import pandas as pd
+import logging
 
-from classes.baseball_db import BaseballDB
+from classes.postgresql_benchmark import PostgreSQLBenchmark
 
-def read_sql_statements(filename: str) -> Iterator[Tuple[int, str]]:
-    """Generator that yields (index, statement) tuples to save memory."""
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def read_sql_file(filename: str) -> List[str]:
+    """Read SQL statements from file"""
     try:
         with open(filename, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        if ';' in content:
-            statements = [stmt.strip() for stmt in content.split(';') if stmt.strip()]
-        else:
-            statements = [line.strip() for line in content.split('\n') if line.strip()]
-            
-        for idx, stmt in enumerate(statements):
-            yield idx, stmt
-            
+        # Split by semicolon and clean
+        statements = [stmt.strip() for stmt in content.split(';') if stmt.strip()]
+          
+        return statements
     except Exception as e:
-        print(f"Error reading file '{filename}': {e}")
-        return
-    
-def load_data(select_file: str, write_file: str, pairs_file: str) -> None:
-    """Load data from SQL files and store them in pandas DataFrames."""
+        logger.error(f"Error reading file '{filename}': {e}", exc_info=True)
+        return []
 
-    # Read SQL statements
-    select_statements = list(read_sql_statements(select_file))
-    write_statements = list(read_sql_statements(write_file))
-    
-    # Create DataFrames
-    select_df = pd.DataFrame(select_statements, columns=['index', 'select_statement'])
-    write_df = pd.DataFrame(write_statements, columns=['index', 'write_statement'])
-    
-    # Save to CSV files
-    select_df.to_csv('select_statements.csv', index=False)
-    write_df.to_csv('write_statements.csv', index=False)
-    
-    # Read pairs file
-    pairs_df = pd.read_csv(pairs_file)
-    
-    print("Data loaded and saved to CSV files.")
-    return select_df, write_df, pairs_df
+def load_pairs_from_csv(pairs_file: str) -> pd.DataFrame:
+    """Load select-write pairs from CSV file"""
+    try:
+        return pd.read_csv(pairs_file)
+    except Exception as e:
+        logger.error(f"Error reading pairs file '{pairs_file}': {e}", exc_info=True)
+        return pd.DataFrame()
 
 def main():
-    parser = argparse.ArgumentParser(description='Execute Read/Write SQL statements in a PostgreSQL database, collect and save the execution times and execution plans.')
-    parser.add_argument('--select_file', required=True, help='File containing SELECT statements')
-    parser.add_argument('--write_file', required=True, help='File containing INSERT/UPDATE/DELETE statements')
-    parser.add_argument('--pairs_file', required=True, help='File containing pairs of SELECT and WRITE statements')
-
+    parser = argparse.ArgumentParser(description='PostgreSQL Benchmarking Tool')
+    parser.add_argument('--select_file', default='/app/data/imv_test_workload.sql', help='File containing SELECT statements')
+    parser.add_argument('--write_file', default='/app/data/write_workload.sql', help='File containing WRITE statements')
+    parser.add_argument('--pairs_file', default='/app/data/matches.csv', help='CSV file containing pairs of SELECT and WRITE statements')
+    parser.add_argument('--output', default='/app/data/benchmark_results.csv', help='Output CSV file name')
+    parser.add_argument('--warmup_rounds', type=int, default=3, help='Number of warmup rounds')
+    parser.add_argument('--limit_experiments', type=int, help='Limit number of experiments (for testing)')
+    
     args = parser.parse_args()
-
-    select_df, write_df, pairs_df = load_data(args.select_file, args.write_file, args.pairs_file)
-
-    # group pairs by select_id
-    pairs_df = pairs_df.groupby('select_id')
-
-    """
-    1. connect to PostgreSQL database
-    2. (?) warmup the database by simple SELECT queries
-    3. Each select statement is an experiment. For each select statement:
-        a. basic setup: no IMVs, no triggers. 
-            - execute the select statement and collect execution times and plans.
-            - Execute the write statements and collect execution times and plans.
-            - rollback the changes.
-        c. Materialized View setup: 
-            - create materialized view for the select statement
-            - execute the select statement and collect execution times and plans.
-            - execute the write statements and collect execution times and plans. 
-            - Refresh the materialized view after each write statement. Collect execution times.
-        d. Incremental View Maintenance setup:
-            - create immv for the select statement using the pg_ivm extension,
-            - execute the select statement and collect execution times and plans.
-            - execute the write statements and collect execution times and trigger plans of the immv.
-            - rollback the changes.
-    4. Save the results in a CSV file.
-    5. Close the database connection.
-    """
-
+    
+    # Database configuration from environment variables
     config = {
-        'host':     os.getenv('PGHOST', 'localhost'),
-        'port':     int(os.getenv('PGPORT', 5432)),
-        'dbname':   os.getenv('PGDATABASE', 'baseball'),
-        'user':     os.getenv('PGUSER', 'postgres'),
-        'password': os.getenv('PGPASSWORD', 'admin'),
+        'host': os.getenv('PGHOST', 'localhost'),
+        'port': int(os.getenv('PGPORT', 5432)),
+        'db_name': os.getenv('PGDATABASE', 'baseball'),
+        'user': os.getenv('PGUSER', 'myuser'),
+        'password': os.getenv('PGPASSWORD', 'mypassword'),
     }
-    baseball_db = BaseballDB(**config)
-
-    if not baseball_db.connect_to_postgres():
-        print("Failed to connect to PostgreSQL. Exiting.")
-        return
     
-    # Warmup phase: Execute simple SELECT queries
-    print("Warming up the database with simple SELECT queries...")
-    for idx, row in select_df.iterrows():
-        try:
-            baseball_db.cursor.execute(row['select_statement'])
-            print(f"Warmup SELECT {idx}: executed successfully.")
-        except Exception as e:
-            print(f"Warmup SELECT {idx}: failed with error: {e}")
-    print("Warmup phase completed.")
-
-    # Experiment phase
-    print("Starting experiment phase...")
+    # Initialize benchmark
+    benchmark = PostgreSQLBenchmark(**config)
     
+    if not benchmark.connect():
+        logger.error("Failed to connect to database. Exiting.")
+        return 1
+    
+    try:
+        # Load SQL statements
+        select_statements = read_sql_file(args.select_file)
+        write_statements = read_sql_file(args.write_file)
+        pairs_df = load_pairs_from_csv(args.pairs_file)
+        
+        if not select_statements or not write_statements or pairs_df.empty:
+            logger.error("Failed to load required data files")
+            return 1
+        
+        logger.info(f"Loaded {len(select_statements)} SELECT statements")
+        logger.info(f"Loaded {len(write_statements)} WRITE statements")
+        logger.info(f"Loaded {len(pairs_df)} statement pairs")
+        
+        # Warmup database
+        benchmark.warmup_database(select_statements, args.warmup_rounds)
+        
+        # Run experiments
+        experiment_count = 0
+        for _, pair in pairs_df.iterrows():
+            if args.limit_experiments and experiment_count >= args.limit_experiments:
+                break
+                
+            select_id = pair['select_id']
+            write_id = pair['write_id']
+            
+            if select_id < len(select_statements) and write_id < len(write_statements):
+                select_stmt = select_statements[select_id]
+                write_stmt = write_statements[write_id]
+                
+                experiment_id = f"exp_{select_id}_{write_id}"
+                
+                # Run experiment with current pair
+                results = benchmark.run_experiment(select_stmt, [write_stmt], experiment_id)
+                benchmark.results.extend(results)
+                
+                experiment_count += 1
+                
+                if experiment_count % 10 == 0:
+                    logger.info(f"Completed {experiment_count} experiments")
+            else:
+                logger.warning(f"Invalid indices in pair: select_id={select_id}, write_id={write_id}")
+        
+        # Save results
+        benchmark.save_results_to_csv(args.output)
+        logger.info(f"Benchmark completed. {experiment_count} experiments processed.")
+        
+    except Exception as e:
+        logger.error(f"Error during benchmark execution: {e}", exc_info=True)
+        return 1
+    finally:
+        benchmark.close_connection()
+    
+    return 0
+
+if __name__ == "__main__":
+    exit(main())
