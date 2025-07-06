@@ -140,17 +140,17 @@ def main():
         description="Clean SQL statements by removing unsupported clauses like ORDER BY",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  python sql_cleaner.py queries.sql
-  python sql_cleaner.py queries.sql --no-backup
-  python sql_cleaner.py queries.sql --dry-run
+            Examples:
+                python sql_cleaner.py queries.sql
+                python sql_cleaner.py queries.sql --no-backup
+                python sql_cleaner.py queries.sql --dry-run
         """
     )
     
     parser.add_argument(
         '--filename',
         type=str,
-        default='/app/data/imv_test_workload.sql',
+        default='/app/data/workload_200k_s1.sql',
         help='SQL file to clean (one statement per line, ending with semicolon)'
     )
     
