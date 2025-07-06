@@ -103,11 +103,11 @@ class BaseballDB:
             return True
             
         except psycopg2.Error as e:
-            logger.error(f"Error executing schema: {e}")
+            logger.error(f"Error executing schema: {e}", exc_info=True)
             self.conn.rollback()
             return False
         except Exception as e:
-            logger.error(f"Error reading schema file: {e}")
+            logger.error(f"Error reading schema file: {e}", exc_info=True)
             return False
     
     def get_table_names(self):
@@ -141,7 +141,7 @@ class BaseballDB:
                 keep_default_na=False,      # do _not_ treat "NA", "", etc. as missing
                 quoting=csv.QUOTE_NONE,
                 comment=None
-            ).head(500)  # Limit to 500 rows
+            ).head(1000)  # Limit rows
             
             if df.empty:
                 logger.warning(f"CSV file is empty: {csv_path}")
