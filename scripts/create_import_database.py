@@ -19,9 +19,9 @@ def main():
     config = {
         'host':     os.getenv('PGHOST', 'localhost'),
         'port':     int(os.getenv('PGPORT', 5432)),
-        'db_name':   os.getenv('PGDATABASE', 'baseball'),
-        'user':     os.getenv('PGUSER', 'postgres'),
-        'password': os.getenv('PGPASSWORD', 'admin'),
+        'db_name':   os.getenv('POSTGRES_DB', 'baseball'),
+        'user':     os.getenv('POSTGRES_USER', 'postgres'),
+        'password': os.getenv('POSTGRES_PASSWORD', 'admin'),
     }
     schema_file = '/app/data/modified_schema.sql'
     csv_directory = '/app/data/norm_tables'

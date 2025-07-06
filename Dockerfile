@@ -1,9 +1,9 @@
-FROM postgres:15
+FROM postgres:16
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential make git unzip \
-      postgresql-server-dev-15 clang llvm \
+      postgresql-server-dev-16 clang llvm \
       ca-certificates python3 python3-pip \
       python3-psycopg2 python3-pandas python3-numpy \
  && rm -rf /var/lib/apt/lists/*
