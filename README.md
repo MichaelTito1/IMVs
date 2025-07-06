@@ -109,3 +109,5 @@ Now you can **run your INSERT** as usual and you'll get the execution plans of t
 
 # Running experiments:
 1. Inside the container, run `python3 /app/scripts/execute_queries.py --limit_experiments 1`. The limit is in place for now just for testing purposes.
+
+2. analyze the results by runnning `python3 /app/scripts/mv_imv_analysis.py`
