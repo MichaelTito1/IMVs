@@ -1,7 +1,9 @@
+# postgresql_benchmark.py
 import csv
 import time
 import logging
 from typing import Any, Dict, List
+import json
 
 from classes.baseball_db import BaseballDB
 
@@ -37,13 +39,12 @@ class PostgreSQLBenchmark(BaseballDB):
         
         for round_num in range(warmup_rounds):
             logger.info(f"Warmup round {round_num + 1}/{warmup_rounds}")
-            # TODO: Are the first 10 select statements duplicates?
             for idx, statement in enumerate(select_statements[:10]):  # Limit to first 10 for warmup
                 try:
                     start_time = time.time()
                     self.cursor.execute(statement)
                     self.cursor.fetchall()  # Ensure all results are fetched
-                    execution_time = time.time() - start_time
+                    execution_time = (time.time() - start_time) * 1000
                     
                     if round_num == 0:  # Only log first round to avoid spam
                         logger.debug(f"Warmup query {idx}: {execution_time:.4f}s")
@@ -70,11 +71,12 @@ class PostgreSQLBenchmark(BaseballDB):
                 plan_query = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {statement}"
                 start_time = time.time()
                 self.cursor.execute(plan_query)
-                plan_result = self.cursor.fetchone()
-                execution_time = time.time() - start_time
+                plan_result = self.cursor.fetchone()[0]
+                execution_time = (time.time() - start_time) * 1000
                 
                 result['execution_time'] = execution_time
-                result['plan'] = plan_result[0] if plan_result else None
+                result['plan_execution_time'] = plan_result[0]['Execution Time'] if plan_result else None
+                result['plan'] = plan_result[0]['Plan'] if plan_result else None
                 
                 # Get actual row count
                 if result['plan'] and isinstance(result['plan'], list):
@@ -84,11 +86,16 @@ class PostgreSQLBenchmark(BaseballDB):
                         pass
             else:
                 # For write operations, just execute and time
+                plan_query = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {statement}"
                 start_time = time.time()
-                self.cursor.execute(statement)
-                execution_time = time.time() - start_time
+                self.cursor.execute(plan_query)
+                plan_result = self.cursor.fetchone()[0]
+                execution_time = (time.time() - start_time) * 1000
                 
                 result['execution_time'] = execution_time
+                result['plan_execution_time'] = plan_result[0]['Execution Time'] if plan_result else None
+                result['plan'] = plan_result[0]['Plan'] if plan_result else None
+                result['triggers'] = plan_result[0]['Triggers'] if 'Triggers' in plan_result[0] else None
                 result['rows_affected'] = self.cursor.rowcount
                 
         except Exception as e:
@@ -118,7 +125,7 @@ class PostgreSQLBenchmark(BaseballDB):
         try:
             # Clean the view name
             clean_view_name = f"imv_{view_name}".replace(' ', '_').replace('-', '_')
-            
+            select_statement = select_statement.replace(';', '').replace('\'', '\'\'')
             imv_sql = f"SELECT pgivm.create_immv('{clean_view_name}', '{select_statement}')"
             self.cursor.execute(imv_sql)
             self.conn.commit()
@@ -143,7 +150,7 @@ class PostgreSQLBenchmark(BaseballDB):
             start_time = time.time()
             self.cursor.execute(f"REFRESH MATERIALIZED VIEW {view_name}")
             self.conn.commit()
-            result['execution_time'] = time.time() - start_time
+            result['execution_time'] = (time.time() - start_time) * 1000
             logger.debug(f"Refreshed materialized view {view_name} in {result['execution_time']:.4f}s")
         except Exception as e:
             result['error'] = str(e)
@@ -152,27 +159,45 @@ class PostgreSQLBenchmark(BaseballDB):
         return result
     
     def cleanup_views(self):
-        """Drop all created materialized and incremental views"""
+        """Drop all created materialized and incremental views, and tables matching 'imv_exp_%'."""
         try:
             # Drop materialized views
             self.cursor.execute("""
-                SELECT schemaname, matviewname FROM pg_matviews 
+                SELECT schemaname, matviewname
+                FROM pg_matviews
                 WHERE matviewname LIKE 'mv_%' OR matviewname LIKE 'imv_%'
             """)
             views = self.cursor.fetchall()
-            
+
             for schema, view_name in views:
                 try:
-                    self.cursor.execute(f"DROP MATERIALIZED VIEW IF EXISTS {schema}.{view_name}")
-                    logger.debug(f"Dropped view: {view_name}")
+                    self.cursor.execute(f"DROP MATERIALIZED VIEW IF EXISTS {schema}.{view_name} CASCADE")
+                    logger.debug(f"Dropped materialized view: {schema}.{view_name}")
                 except Exception as e:
-                    logger.warning(f"Error dropping view {view_name}: {e}", exc_info=True)
-            
+                    logger.warning(f"Error dropping materialized view {schema}.{view_name}: {e}", exc_info=True)
+
+            # Drop tables matching 'imv_exp_%'
+            self.cursor.execute("""
+                SELECT schemaname, tablename
+                FROM pg_tables
+                WHERE tablename LIKE 'imv_exp_%'
+            """)
+            tables = self.cursor.fetchall()
+
+            for schema, table_name in tables:
+                try:
+                    self.cursor.execute(f"DROP TABLE IF EXISTS {schema}.{table_name} CASCADE")
+                    logger.debug(f"Dropped table: {schema}.{table_name}")
+                except Exception as e:
+                    logger.warning(f"Error dropping table {schema}.{table_name}: {e}", exc_info=True)
+
             self.conn.commit()
-            logger.info("Cleanup completed")
-            
+            logger.info("Cleanup of views and tables completed")
+
         except Exception as e:
+            self.conn.rollback()
             logger.error(f"Error during cleanup: {e}", exc_info=True)
+
     
     def run_experiment(self, select_statement: str, write_statements: List[str], experiment_id: str) -> List[Dict[str, Any]]:
         """Run a complete experiment with all three configurations"""
@@ -205,8 +230,7 @@ class PostgreSQLBenchmark(BaseballDB):
                 })
                 experiment_results.append(write_result)
             
-            # TODO: Does rolling back give us accurate execution times?
-            self.conn.rollback()  # Rollback changes
+            self.conn.commit()  # Commit changes
             
         except Exception as e:
             logger.error(f"Error in basic setup for experiment {experiment_id}: {e}", exc_info=True)
@@ -286,7 +310,7 @@ class PostgreSQLBenchmark(BaseballDB):
                     })
                     experiment_results.append(write_result)
             
-            self.conn.rollback()  # Rollback changes
+            self.conn.commit()
             
         except Exception as e:
             logger.error(f"Error in incremental view setup for experiment {experiment_id}: {e}", exc_info=True)
@@ -305,12 +329,14 @@ class PostgreSQLBenchmark(BaseballDB):
         flattened_results = []
         
         for result in self.results:
+            logger.info(f"Flattening result: {list(result.keys())}")
             flat_result = {
                 'experiment_id': result.get('experiment_id', ''),
                 'configuration': result.get('configuration', ''),
                 'operation_type': result.get('operation_type', ''),
                 'write_index': result.get('write_index', ''),
                 'execution_time': result.get('execution_time', 0),
+                'plan_execution_time': result.get('plan_execution_time', 0),
                 'rows_affected': result.get('rows_affected', 0),
                 'error': result.get('error', ''),
                 'statement': result.get('statement', '')[:200],  # Truncate for CSV
@@ -320,13 +346,16 @@ class PostgreSQLBenchmark(BaseballDB):
             if result.get('plan'):
                 try:
                     plan = result['plan']
-                    if isinstance(plan, list) and len(plan) > 0:
-                        flat_result['plan_total_cost'] = plan[0].get('Plan', {}).get('Total Cost', 0)
-                        flat_result['plan_actual_time'] = plan[0].get('Plan', {}).get('Actual Total Time', 0)
-                        flat_result['plan_node_type'] = plan[0].get('Plan', {}).get('Node Type', '')
+                    
+                    if isinstance(plan, dict):
+                        flat_result['plan_total_cost'] = plan['Total Cost'] if 'Total Cost' in plan else 0
+                        flat_result['plan_actual_time'] = plan['Actual Total Time'] if 'Actual Total Time' in plan else 0
+                        flat_result['plan_node_type'] = plan['Node Type'] if 'Node Type' in plan else ''
+                        flat_result['plan'] = json.dumps(plan, ensure_ascii=False)  # Store full plan as JSON
                 except Exception as e:
                     logger.warning(f"Error processing plan data: {e}", exc_info=True)
             
+            flat_result['triggers'] = json.dumps(result.get('triggers', []), ensure_ascii=False) if result.get('triggers') else ''
             flattened_results.append(flat_result)
         
         # Write to CSV
