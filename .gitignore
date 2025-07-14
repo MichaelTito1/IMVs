@@ -3,4 +3,7 @@ pgdata/
 /scripts/.*
 /scripts/*.csv
 data/norm_tables
+data/results
+data/*.csv
+data/*.sql
 scripts/classes/__pycache__/
