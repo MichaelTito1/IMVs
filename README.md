@@ -99,7 +99,7 @@ Now you can **run your INSERT** as usual and you'll get the execution plans of t
 
 # Match read and write statements:
 - From this repo, run `read_write_sql_matcher.py` as follows to get ~100k rows with 5 writes per select statement:
-`python3 /app/scripts/read_write_sql_matcher.py --write_file /app/data/write_workload.sql --select_file /app/data/workload_200k_s1.sql --max-writes-per-table 10 --max-matches-per-select 5 --max-total-matches 100000`
+`python3 /app/scripts/read_write_sql_matcher.py --write_file /app/data/write_workload.sql --select_file /app/data/workload_200k_s1.sql --max-writesper-table 1000 --max-matches-per-select 100 --max-total-matches 100000`
 
 # how to create baseball DB on PG and import the data:
 0. make sure that `norm_tables/` directory contains the csv table files, and that it and `modified_schema.sql` file are in `./data` directory.

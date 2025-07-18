@@ -142,7 +142,7 @@ class BaseballDB:
                 keep_default_na=False,      # do _not_ treat "NA", "", etc. as missing
                 quoting=csv.QUOTE_NONE,
                 comment=None
-            ).head(1000)  # Limit rows
+            ).head(150000)  # Limit rows
             
             if df.empty:
                 logger.warning(f"CSV file is empty: {csv_path}")
