@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -178,20 +177,44 @@ def create_visualizations(merged_data, speedup_by_write_index, overall_stats):
     
     # 3. Execution Time Comparison (Scatter Plot)
     ax3 = axes[1, 0]
-    scatter = ax3.scatter(merged_data['immv_time'], merged_data['total_time'], 
-                         alpha=0.6, s=60, c=merged_data['speedup'], cmap='RdYlBu_r')
-    ax3.plot([merged_data['immv_time'].min(), merged_data['immv_time'].max()],
-             [merged_data['immv_time'].min(), merged_data['immv_time'].max()],
-             'r--', alpha=0.7, label='Equal Performance')
-    ax3.set_title('Execution Time Comparison\n(Color = Speedup)', fontweight='bold')
-    ax3.set_xlabel('IMMV Time (milliseconds)')
-    ax3.set_ylabel('MV Total Time (milliseconds)')
+    # 1) equal aspect
+    ax3.set_aspect('equal', adjustable='box')
+
+    # 2) two‑color scatter
+    winner = np.where(
+        merged_data['total_time'] > merged_data['immv_time'],
+        'IMMV faster', 'MV faster'
+    )
+    palette = {'IMMV faster':'C0', 'MV faster':'C1'}
+    for w in ['IMMV faster','MV faster']:
+        sel = winner==w
+        ax3.scatter(
+            merged_data.loc[sel,'immv_time'],
+            merged_data.loc[sel,'total_time'],
+            label=w, 
+            color=palette[w],
+            alpha=0.7, s=60
+        )
+
+    # 3) shaded regions
+    xmin, xmax = ax3.get_xlim()
+    ax3.fill_between(
+        [xmin,xmax], [xmin,xmax], [ax3.get_ylim()[1]]*2,
+        color='C0', alpha=0.1
+    )
+    ax3.fill_between(
+        [xmin,xmax], [ax3.get_ylim()[0]]*2, [xmin,xmax],
+        color='C1', alpha=0.1
+    )
+
+    # 45° line
+    ax3.plot([xmin, xmax], [xmin, xmax], 'r--', alpha=0.7, label='Equal performance')
+
+    ax3.set_title('Execution Time Comparison', fontweight='bold')
+    ax3.set_xlabel('IMMV Time (ms)')
+    ax3.set_ylabel('MV Total Time (ms)')
     ax3.legend()
     ax3.grid(True, alpha=0.3)
-    
-    # Add colorbar
-    cbar = plt.colorbar(scatter, ax=ax3)
-    cbar.set_label('Speedup Factor')
     
     # 4. Average Times by Write Index (Grouped Bar Chart)
     ax4 = axes[1, 1]
