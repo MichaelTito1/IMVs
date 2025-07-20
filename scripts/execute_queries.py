@@ -8,7 +8,7 @@ from collections import defaultdict
 from classes.postgresql_benchmark import PostgreSQLBenchmark
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def read_sql_file(filename: str) -> List[str]:
@@ -102,7 +102,7 @@ def main():
                        help='CSV file containing pairs of SELECT and WRITE statements')
     parser.add_argument('--output', default='/app/data/benchmark_results.csv', 
                        help='Output CSV file name')
-    parser.add_argument('--warmup_rounds', type=int, default=3, 
+    parser.add_argument('--warmup_rounds', type=int, default=5, 
                        help='Number of warmup rounds')
     parser.add_argument('--limit_experiments', type=int, 
                        help='Limit number of experiments (for testing)')
@@ -110,6 +110,10 @@ def main():
                        help='Limit number of write statements per select (for testing)')
     parser.add_argument('--start_from_experiment', type=int, default=0,
                        help='Start from a specific experiment number (for resuming)')
+    parser.add_argument('--batch_mode', action='store_true',
+                       help='Enable batch execution of write statements')  # New argument
+    parser.add_argument('--run_both_modes', action='store_true',
+                       help='Run both individual and batch modes for comparison')  # New argument
     
     args = parser.parse_args()
     
@@ -157,61 +161,72 @@ def main():
         logger.info("Starting database warmup...")
         benchmark.warmup_database(select_statements, args.warmup_rounds)
         
+        # Determine which modes to run
+        modes_to_run = []
+        if args.run_both_modes:
+            modes_to_run = [False, True]  # Individual first, then batch
+        else:
+            modes_to_run = [args.batch_mode]
+        
         # Run experiments grouped by select statement
         experiment_count = 0
-        total_experiments = len(groups)
+        total_experiments = len(groups) * len(modes_to_run)
         
         if args.limit_experiments:
             total_experiments = min(total_experiments, args.limit_experiments)
         
         logger.info(f"Starting {total_experiments} experiments...")
         
-        for select_id in sorted(groups.keys()):
-            if args.limit_experiments and experiment_count >= args.limit_experiments:
-                break
+        for batch_mode in modes_to_run:
+            mode_str = "batch" if batch_mode else "individual"
+            logger.info(f"Running experiments in {mode_str} mode...")
             
-            if experiment_count < args.start_from_experiment:
-                experiment_count += 1
-                continue
-            
-            write_ids = groups[select_id]
-            
-            # Limit write statements if specified
-            if args.limit_writes_per_select:
-                write_ids = write_ids[:args.limit_writes_per_select]
-            
-            if select_id < len(select_statements):
-                select_stmt = select_statements[select_id]
+            for select_id in sorted(groups.keys()):
+                if args.limit_experiments and experiment_count >= args.limit_experiments:
+                    break
                 
-                # Get corresponding write statements
-                write_stmts = []
-                for write_id in write_ids:
-                    if write_id < len(write_statements):
-                        write_stmts.append(write_statements[write_id])
-                    else:
-                        logger.warning(f"Invalid write_id {write_id} for select_id {select_id}")
-                
-                if write_stmts:
-                    experiment_id = f"exp_{select_id}"
-                    
-                    logger.info(f"Running experiment {experiment_count + 1}/{total_experiments}: "
-                              f"select_id={select_id}, {len(write_stmts)} write statements")
-                    
-                    # Run experiment with current select and its write statements
-                    results = benchmark.run_experiment(select_stmt, write_stmts, experiment_id)
-                    benchmark.results.extend(results)
-                    
+                if experiment_count < args.start_from_experiment:
                     experiment_count += 1
+                    continue
+                
+                write_ids = groups[select_id]
+                
+                # Limit write statements if specified
+                if args.limit_writes_per_select:
+                    write_ids = write_ids[:args.limit_writes_per_select]
+                
+                if select_id < len(select_statements):
+                    select_stmt = select_statements[select_id]
                     
-                    # Save intermediate results every 5 experiments
-                    if experiment_count % 5 == 0:
-                        intermediate_file = f"{args.output}.tmp"
-                        benchmark.save_results_to_csv(intermediate_file)
-                        logger.info(f"Saved intermediate results to {intermediate_file}")
+                    # Get corresponding write statements
+                    write_stmts = []
+                    for write_id in write_ids:
+                        if write_id < len(write_statements):
+                            write_stmts.append(write_statements[write_id])
+                        else:
+                            logger.warning(f"Invalid write_id {write_id} for select_id {select_id}")
+                    
+                    if write_stmts:
+                        experiment_id = f"exp_{select_id}_{mode_str}"
+                        
+                        logger.info(f"Running experiment {experiment_count + 1}/{total_experiments}: "
+                                  f"select_id={select_id}, {len(write_stmts)} write statements, mode={mode_str}")
+                        
+                        # Run experiment with current select and its write statements
+                        results = benchmark.run_experiment(select_stmt, write_stmts, experiment_id, use_batch=batch_mode)
+                        benchmark.results.extend(results)
+                        
+                        experiment_count += 1
+                        
+                        # Save intermediate results every 5 experiments
+                        if experiment_count % 5 == 0:
+                            intermediate_file = f"{args.output}.tmp"
+                            benchmark.save_results_to_csv(intermediate_file)
+                            logger.info(f"Saved intermediate results to {intermediate_file}")
+                    else:
+                        logger.warning(f"No valid write statements found for select_id {select_id}")
                 else:
-                    logger.warning(f"No valid write statements found for select_id {select_id}")
-            else:
-                logger.warning(f"Invalid select_id: {select_id}")
+                    logger.warning(f"Invalid select_id: {select_id}")
         
         # Save final results
         benchmark.save_results_to_csv(args.output)
@@ -227,17 +242,20 @@ def main():
             logger.info(f"Configurations tested: {', '.join(configs)}")
             logger.info(f"Operation types: {', '.join(operations)}")
             
-            # Calculate average execution times by configuration
-            config_times = defaultdict(list)
+            # Calculate average execution times by configuration and batch mode
+            config_times = defaultdict(lambda: defaultdict(list))
             
             for result in benchmark.results:
                 if result.get('execution_time') and not result.get('error'):
                     config = result.get('configuration', 'unknown')
-                    config_times[config].append(result['execution_time'])
+                    batch_mode = result.get('batch_mode', False)
+                    config_times[config][batch_mode].append(result['execution_time'])
             
-            for config, times in config_times.items():
-                avg_time = sum(times) / len(times)
-                logger.info(f"Average execution time for {config}: {avg_time:.4f}s ({len(times)} operations)")
+            for config, batch_data in config_times.items():
+                for batch_mode, times in batch_data.items():
+                    mode_str = "batch" if batch_mode else "individual"
+                    avg_time = sum(times) / len(times)
+                    logger.info(f"Average execution time for {config} ({mode_str}): {avg_time:.4f}s ({len(times)} operations)")
         
     except KeyboardInterrupt:
         logger.info("Benchmark interrupted by user. Saving partial results...")
