@@ -10,6 +10,12 @@ import csv
 import argparse
 import os
 import re
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+MAX_JOINS_PER_QUERY = 3
 
 def parse_args():
     """Parse command line arguments."""
@@ -18,6 +24,9 @@ def parse_args():
     parser.add_argument('--output', default='/app/data/write_statements.csv', help='Output file for write statements')
     parser.add_argument('--format', choices=['csv', 'sql'], default='csv', 
                        help='Output format: csv (default) or sql statements only')
+    parser.add_argument('--max-joins-per-query', type=int, default=MAX_JOINS_PER_QUERY,
+                       help='Maximum number of joins per query')
+    
     return parser.parse_args()
 
 def remove_table_suffixes(sql: str) -> str:
@@ -36,7 +45,7 @@ def remove_table_suffixes(sql: str) -> str:
     return pattern.sub(lambda m: f'{m.group("quote") or ""}{m.group("name")}{m.group("quote") or ""}',
                        sql)
 
-def filter_write_statements(input_file, output_file, output_format='csv'):
+def filter_write_statements(input_file, output_file, output_format='csv', max_joins_per_query=MAX_JOINS_PER_QUERY):
     """Filter write statements from the workload CSV file and remove duplicates."""
     write_types = {'insert', 'update', 'delete'}
     write_statements = []
@@ -46,10 +55,21 @@ def filter_write_statements(input_file, output_file, output_format='csv'):
         reader = csv.DictReader(csvfile)
         for row in reader:
             query_type = row.get('query_type', '').lower().strip()
-            if query_type in write_types:
-                write_statements.append(row)
+            if query_type not in write_types:
+                continue
+            num_joins = len(row.get('join_tables').split(',') if row.get('join_tables') else [])
+            if num_joins > max_joins_per_query:
+                print(f"Skipping query with {num_joins} joins (max allowed: {max_joins_per_query})")
+                continue
+
+            # TODO: TEMPORARY: Skip INSERT statements
+            sql = row.get('sql', '').strip()
+            if sql.startswith('INSERT INTO'):
+                logger.info(f"Found INSERT statement: {sql}. Skipping...")
+                continue
+            write_statements.append(row)
     
-    print(f"Found {len(write_statements)} write statements (including duplicates)")
+    print(f"Found {len(write_statements)} write statements (including duplicates) out of {reader.line_num} total rows.")
     # Clean SQL and remove table suffixes
     for stmt in write_statements:
         sql = stmt.get('sql', '').strip()
@@ -116,8 +136,13 @@ def main():
     output_dir = os.path.dirname(output_file)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
+    
+    max_joins_per_query = args.max_joins_per_query
+    if max_joins_per_query <= 0:
+        logger.error("--max-joins-per-query must be a positive integer!")
+        return 1
     try:
-        filter_write_statements(input_file, output_file, args.format)
+        filter_write_statements(input_file, output_file, args.format, max_joins_per_query)
         return 0
     except Exception as e:
         print(f"Error: {e}")
