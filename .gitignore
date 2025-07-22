@@ -1,7 +1,6 @@
 pgdata/
-tpch/
 /scripts/__pycache__/
 /scripts/.*
 /scripts/*.csv
-TPC-H-Tool.zip
-refresh*.sql
+data/norm_tables
+scripts/classes/__pycache__/

@@ -199,7 +199,7 @@ def process_with_limits(select_file: str, write_file: str,
     print(f"  Max total matches: {max_total_matches}")
     
     # Open output file with explicit encoding and proper CSV settings
-    output_file = 'matches.csv'
+    output_file = '/app/data/matches.csv'
     with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
         fieldnames = ['select_id', 'select_tables', 
                      'write_id', 'write_tables', 'common_tables']
