@@ -81,7 +81,6 @@ class PostgreSQLBenchmark(BaseballDB):
             if statement_type == "SELECT":
                 logger.info(f"Executing SELECT statement")
                 plan_query = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {statement}"
-                # TODO: Change time calculation
                 start_time = time.time()
                 self.cursor.execute(plan_query)
                 logger.info(f"finished executing SELECT statement")
