@@ -30,6 +30,7 @@ def remove_table_suffixes(sql: str) -> str:
             (?P<name>[A-Za-z_][A-Za-z0-9_]*?)
             _\d+
             (?P=quote)?
+            (?=\s|$|,|;|\)|\"|\.)
         ''',
         flags=re.VERBOSE
     )
