@@ -99,7 +99,7 @@ Now you can **run your INSERT** as usual and you'll get the execution plans of t
 
 # Match read and write statements:
 - From this repo, run `read_write_sql_matcher.py` as follows to get ~100k rows with 5 writes per select statement:
-`python3 /app/scripts/read_write_sql_matcher.py --write_file /app/data/write_workload.sql --select_file /app/data/workload_200k_s1.sql --max-writes-per-table 10 --max-matches-per-select 5 --max-total-matches 100000`
+`python3 /app/scripts/read_write_sql_matcher.py --write_file /app/data/write_workload.sql --select_file /app/data/workload_200k_s1.sql --max-writes-per-table 1000 --max-matches-per-select 100 --max-total-matches 100000`
 
 # how to create baseball DB on PG and import the data:
 0. make sure that `norm_tables/` directory contains the csv table files, and that it and `modified_schema.sql` file are in `./data` directory.
@@ -108,6 +108,6 @@ Now you can **run your INSERT** as usual and you'll get the execution plans of t
 3. Run the script: `python3 /app/scripts/create_import_database.py`
 
 # Running experiments:
-1. Inside the container, run `python3 /app/scripts/execute_queries.py --limit_experiments 1`. The limit is in place for now just for testing purposes.
+1. Inside the container, run `python3 /app/scripts/execute_queries.py --limit_experiments 1 --limit_writes_per_select 100`. The limit is in place for now just for testing purposes.
 
 2. analyze the results by runnning `python3 /app/scripts/mv_imv_analysis.py`

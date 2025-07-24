@@ -166,52 +166,56 @@ def main():
         
         logger.info(f"Starting {total_experiments} experiments...")
         
-        for select_id in sorted(groups.keys()):
-            if args.limit_experiments and experiment_count >= args.limit_experiments:
-                break
+        for batch_mode in modes_to_run:
+            mode_str = "batch" if batch_mode else "individual"
+            logger.info(f"Running experiments in {mode_str} mode...")
             
-            if experiment_count < args.start_from_experiment:
-                experiment_count += 1
-                continue
-            
-            write_ids = groups[select_id]
-            
-            # Limit write statements if specified
-            if args.limit_writes_per_select:
-                write_ids = write_ids[:args.limit_writes_per_select]
-            
-            if select_id < len(select_statements):
-                select_stmt = select_statements[select_id]
+            for select_id in sorted(groups.keys()):
+                if args.limit_experiments and experiment_count >= args.limit_experiments:
+                    break
                 
-                # Get corresponding write statements
-                write_stmts = []
-                for write_id in write_ids:
-                    if write_id < len(write_statements):
-                        write_stmts.append(write_statements[write_id])
-                    else:
-                        logger.warning(f"Invalid write_id {write_id} for select_id {select_id}")
-                
-                if write_stmts:
-                    experiment_id = f"exp_{select_id}"
-                    
-                    logger.info(f"Running experiment {experiment_count + 1}/{total_experiments}: "
-                              f"select_id={select_id}, {len(write_stmts)} write statements")
-                    
-                    # Run experiment with current select and its write statements
-                    results = benchmark.run_experiment(select_stmt, write_stmts, experiment_id)
-                    benchmark.results.extend(results)
-                    
+                if experiment_count < args.start_from_experiment:
                     experiment_count += 1
+                    continue
+                
+                write_ids = groups[select_id]
+                
+                # Limit write statements if specified
+                if args.limit_writes_per_select:
+                    write_ids = write_ids[:args.limit_writes_per_select]
+                
+                if select_id < len(select_statements):
+                    select_stmt = select_statements[select_id]
                     
-                    # Save intermediate results every 5 experiments
-                    if experiment_count % 5 == 0:
-                        intermediate_file = f"{args.output}.tmp"
-                        benchmark.save_results_to_csv(intermediate_file)
-                        logger.info(f"Saved intermediate results to {intermediate_file}")
+                    # Get corresponding write statements
+                    write_stmts = []
+                    for write_id in write_ids:
+                        if write_id < len(write_statements):
+                            write_stmts.append((write_id, write_statements[write_id]))
+                        else:
+                            logger.warning(f"Invalid write_id {write_id} for select_id {select_id}")
+                    
+                    if write_stmts:
+                        experiment_id = f"exp_{select_id}_{mode_str}"
+                        
+                        logger.info(f"Running experiment {experiment_count + 1}/{total_experiments}: "
+                                  f"select_id={select_id}, {len(write_stmts)} write statements, mode={mode_str}")
+                        
+                        # Run experiment with current select and its write statements
+                        results = benchmark.run_experiment(select_stmt, write_stmts, experiment_id, use_batch=batch_mode)
+                        benchmark.results.extend(results)
+                        
+                        experiment_count += 1
+                        
+                        # Save intermediate results every 5 experiments
+                        if experiment_count % 5 == 0:
+                            intermediate_file = f"{args.output}.tmp"
+                            benchmark.save_results_to_csv(intermediate_file)
+                            logger.info(f"Saved intermediate results to {intermediate_file}")
+                    else:
+                        logger.warning(f"No valid write statements found for select_id {select_id}")
                 else:
-                    logger.warning(f"No valid write statements found for select_id {select_id}")
-            else:
-                logger.warning(f"Invalid select_id: {select_id}")
+                    logger.warning(f"Invalid select_id: {select_id}")
         
         # Save final results
         benchmark.save_results_to_csv(args.output)

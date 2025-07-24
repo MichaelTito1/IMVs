@@ -199,8 +199,11 @@ class PostgreSQLBenchmark(BaseballDB):
             logger.error(f"Error during cleanup: {e}", exc_info=True)
 
     
-    def run_experiment(self, select_statement: str, write_statements: List[str], experiment_id: str) -> List[Dict[str, Any]]:
-        """Run a complete experiment with all three configurations"""
+    def run_experiment(self, select_statement: str, write_statements: List[(int, str)], experiment_id: str, use_batch: bool = False) -> List[Dict[str, Any]]:
+        """
+        Run a complete experiment with all three configurations.
+        Modified to support batch execution of write statements.
+        """
         experiment_results = []
         
         logger.info(f"Starting experiment {experiment_id}")
@@ -220,13 +223,16 @@ class PostgreSQLBenchmark(BaseballDB):
             experiment_results.append(select_result)
             
             # Execute WRITE statements
-            for write_idx, write_statement in enumerate(write_statements):
+            for write_id, write_statement in write_ops:
+                logger.info(f"Executing write statement {write_id + 1}/{len(write_ops)}")
                 write_result = self.execute_with_timing_and_plan(write_statement, "WRITE", fetch_results=False)
                 write_result.update({
                     'experiment_id': experiment_id,
                     'configuration': 'basic',
                     'operation_type': 'write',
-                    'write_index': write_idx
+                    'write_index': write_id,
+                    'batch_mode': use_batch,
+                    'batch_size': batch_size
                 })
                 experiment_results.append(write_result)
             
@@ -253,14 +259,16 @@ class PostgreSQLBenchmark(BaseballDB):
                 experiment_results.append(select_result)
                 
                 # Execute WRITE statements with MV refresh
-                for write_idx, write_statement in enumerate(write_statements):
+                for write_id, write_statement in write_ops:
                     # Execute write
                     write_result = self.execute_with_timing_and_plan(write_statement, "WRITE", fetch_results=False)
                     write_result.update({
                         'experiment_id': experiment_id,
                         'configuration': 'materialized_view',
                         'operation_type': 'write',
-                        'write_index': write_idx
+                        'write_index': write_id,
+                        'batch_mode': use_batch,
+                        'batch_size': batch_size
                     })
                     experiment_results.append(write_result)
                     
@@ -270,7 +278,9 @@ class PostgreSQLBenchmark(BaseballDB):
                         'experiment_id': experiment_id,
                         'configuration': 'materialized_view',
                         'operation_type': 'refresh',
-                        'write_index': write_idx
+                        'write_index': write_id,
+                        'batch_mode': use_batch,
+                        'batch_size': batch_size
                     })
                     experiment_results.append(refresh_result)
                 
@@ -300,13 +310,15 @@ class PostgreSQLBenchmark(BaseballDB):
                 experiment_results.append(select_result)
                 
                 # Execute WRITE statements (IMV updates automatically)
-                for write_idx, write_statement in enumerate(write_statements):
+                for write_id, write_statement in write_ops:
                     write_result = self.execute_with_timing_and_plan(write_statement, "WRITE", fetch_results=False)
                     write_result.update({
                         'experiment_id': experiment_id,
                         'configuration': 'incremental_view',
                         'operation_type': 'write',
-                        'write_index': write_idx
+                        'write_index': write_id,
+                        'batch_mode': use_batch,
+                        'batch_size': batch_size
                     })
                     experiment_results.append(write_result)
             
