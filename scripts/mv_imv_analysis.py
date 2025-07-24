@@ -242,21 +242,32 @@ def create_enhanced_visualizations(merged_data, speedup_by_write_index, overall_
                          c=merged_data['speedup'], cmap='RdYlBu_r', 
                          s=60, alpha=0.6, edgecolors='black', linewidth=0.5)
     
-    # Add trend line
-    z = np.polyfit(merged_data['immv_time'], merged_data['total_time'], 1)
-    p = np.poly1d(z)
-    x_trend = np.linspace(merged_data['immv_time'].min(), merged_data['immv_time'].max(), 100)
-    ax3.plot(x_trend, p(x_trend), "r--", alpha=0.8, linewidth=2, label=f'Trend Line')
+    # Add trend line in log space for better fit
+    log_immv = np.log10(merged_data['immv_time'])
+    log_mv = np.log10(merged_data['total_time'])
+    z = np.polyfit(log_immv, log_mv, 1)
+    
+    # Create trend line in original space
+    x_trend = np.logspace(np.log10(merged_data['immv_time'].min()), 
+                         np.log10(merged_data['immv_time'].max()), 100)
+    y_trend = 10**(z[0] * np.log10(x_trend) + z[1])
+    ax3.plot(x_trend, y_trend, "r--", alpha=0.8, linewidth=2, label=f'Power Trend Line')
     
     # Equal performance line
+    min_time = min(merged_data['immv_time'].min(), merged_data['total_time'].min())
     max_time = max(merged_data['immv_time'].max(), merged_data['total_time'].max())
-    ax3.plot([0, max_time], [0, max_time], 'k--', alpha=0.5, linewidth=2, label='Equal Performance')
+    equal_line = np.logspace(np.log10(min_time), np.log10(max_time), 100)
+    ax3.plot(equal_line, equal_line, 'k--', alpha=0.5, linewidth=2, label='Equal Performance')
     
-    ax3.set_title('Execution Time Comparison with Trend Analysis', fontweight='bold', fontsize=14)
-    ax3.set_xlabel('IMMV Time (milliseconds)', fontsize=12)
-    ax3.set_ylabel('MV Total Time (Write + Refresh, milliseconds)', fontsize=12)
+    # Set log scales for both axes
+    ax3.set_xscale('log')
+    ax3.set_yscale('log')
+    
+    ax3.set_title('Execution Time Comparison with Trend Analysis (Log Scale)', fontweight='bold', fontsize=14)
+    ax3.set_xlabel('IMMV Time (milliseconds, log scale)', fontsize=12)
+    ax3.set_ylabel('MV Total Time (Write + Refresh, milliseconds, log scale)', fontsize=12)
     ax3.legend()
-    ax3.grid(True, alpha=0.3)
+    ax3.grid(True, alpha=0.3, which='both')
     
     # Add colorbar
     cbar = plt.colorbar(scatter, ax=ax3)
@@ -363,9 +374,12 @@ def create_decision_matrix_plot(speedup_by_write_index, overall_stats):
     ax2.axhline(y=2, color='green', linestyle='--', alpha=0.6, label='Strong IMMV Preference')
     ax2.axhline(y=0.5, color='red', linestyle='--', alpha=0.6, label='Strong MV Preference')
     
-    ax2.fill_between(x.min(), 2, x.max(), y2=100, alpha=0.1, color='green', label='IMMV Recommended Zone')
-    ax2.fill_between(x.min(), 0, x.max(), y2=0.5, alpha=0.1, color='red', label='MV Recommended Zone')
-    ax2.fill_between(x.min(), 0.5, x.max(), y2=2, alpha=0.1, color='yellow', label='Context-Dependent Zone')
+    # Create x range for fill_between
+    x_range = [x.min(), x.max()]
+    
+    ax2.fill_between(x_range, [2, 2], [100, 100], alpha=0.1, color='green', label='IMMV Recommended Zone')
+    ax2.fill_between(x_range, [0, 0], [0.5, 0.5], alpha=0.1, color='red', label='MV Recommended Zone')
+    ax2.fill_between(x_range, [0.5, 0.5], [2, 2], alpha=0.1, color='yellow', label='Context-Dependent Zone')
     
     ax2.set_xlim(x.min() * 0.9, x.max() * 1.1)
     ax2.set_ylim(0, max(y.max() * 1.1, 10))
