@@ -7,6 +7,7 @@ import json
 import re
 
 from classes.baseball_db import BaseballDB
+from utils import remove_table_suffixes
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -389,6 +390,42 @@ class PostgreSQLBenchmark(BaseballDB):
         logger.info(f"Completed experiment {experiment_id}")
         return experiment_results
 
+    def _get_write_statement_metadata(self, write_index: int) -> Dict[str, Any]:
+        """
+        Given the write statement index (the row number) in the write_workload.sql file, it opens the write_workload.csv file, find the write statement with the same index, and
+            returns the following data:
+            - query_type
+            - num_joins
+            - num_scans
+            - num_aggregations
+            - start_table
+            - join_tables
+            - write_table
+        """
+        metadata = {}
+        
+        try:
+            # TODO: Specify argument for path to write_workload.csv
+            # TODO: write more efficient code to read the file
+            with open('/app/data/write_workload.csv', 'r', encoding='utf-8') as csvfile:
+                reader = csv.DictReader(csvfile)
+                for idx, row in enumerate(reader):
+                    if idx == write_index:
+                        metadata = {
+                            'query_type': row.get('query_type', ''),
+                            'num_joins': int(row.get('num_joins', 0)),
+                            'num_scans': int(row.get('num_scans', 0)),
+                            'num_aggregations': int(row.get('num_aggregations', 0)),
+                            'start_table': remove_table_suffixes(row.get('start_t', '')),
+                            'join_tables': [remove_table_suffixes(t) for t in row.get('join_tables', '').split(',') if t],
+                            'write_table': remove_table_suffixes(row.get('write_table', '')),
+                        }
+                        break
+        except Exception as e:
+            logger.error(f"Error reading write statement metadata: {e}", exc_info=True)
+        
+        return metadata
+
     def save_results_to_csv(self, filename: str = "benchmark_results.csv"):
         """
         Save all results to a CSV file.
@@ -417,6 +454,11 @@ class PostgreSQLBenchmark(BaseballDB):
                 'error': result.get('error', ''),
                 'statement': result.get('statement', '')[:200],  # Truncate for CSV
             }
+            # Add metadata using write_index from flat_result
+            if 'write_index' in flat_result and flat_result['write_index'] != '':
+                write_index = int(flat_result['write_index'])
+                metadata = self._get_write_statement_metadata(write_index)
+                flat_result.update(metadata)
             
             # Add plan information if available
             if result.get('plan'):
@@ -436,7 +478,8 @@ class PostgreSQLBenchmark(BaseballDB):
         
         # Write to CSV
         if flattened_results:
-            fieldnames = flattened_results[0].keys()
+            # index 0 -> select statement (no metadata), index 1 -> first write statement (with metadata)
+            fieldnames = flattened_results[1].keys()
             
             with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
