@@ -9,7 +9,7 @@ saving them to a separate file.
 import csv
 import argparse
 import os
-import re
+from utils import remove_table_suffixes
 
 def parse_args():
     """Parse command line arguments."""
@@ -19,23 +19,6 @@ def parse_args():
     parser.add_argument('--format', choices=['csv', 'sql'], default='csv', 
                        help='Output format: csv (default) or sql statements only')
     return parser.parse_args()
-
-def remove_table_suffixes(sql: str) -> str:
-    """
-    Remove _{number} suffixes from table names (quoted or unquoted)
-    in SQL statements.
-    """
-    pattern = re.compile(
-        r'''(?P<quote>\")?
-            (?P<name>[A-Za-z_][A-Za-z0-9_]*?)
-            _\d+
-            (?P=quote)?
-            (?=\s|$|,|;|\)|\"|\.)
-        ''',
-        flags=re.VERBOSE
-    )
-    return pattern.sub(lambda m: f'{m.group("quote") or ""}{m.group("name")}{m.group("quote") or ""}',
-                       sql)
 
 def filter_write_statements(input_file, output_file, output_format='csv'):
     """Filter write statements from the workload CSV file and remove duplicates."""
