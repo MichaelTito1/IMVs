@@ -196,42 +196,39 @@ def create_enhanced_visualizations(merged_data, speedup_by_write_index, overall_
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
-    # 3. Performance by Write Index Categories
+    # 3. Speedup Distribution by SQL Statement Type
     ax2 = fig.add_subplot(gs[1, 2:])
     
-    # Categorize write indices for better visualization
+    # Create bins for speedup values instead of write indices
+    speedup_bins = [0, 0.5, 1.0, 2.0, 5.0, float('inf')]
+    speedup_labels = ['MV Much Better\n(<0.5x)', 'MV Better\n(0.5-1x)', 
+                     'Balanced\n(1-2x)', 'IMMV Better\n(2-5x)', 'IMMV Much Better\n(>5x)']
+    
     speedup_copy = speedup_by_write_index.copy()
-    speedup_copy['category'] = pd.cut(speedup_copy['write_index'], 
-                                     bins=[0, 50, 150, 300, 600, float('inf')],
-                                     labels=['Very Low\n(0-50)', 'Low\n(51-150)', 
-                                            'Medium\n(151-300)', 'High\n(301-600)', 'Very High\n(600+)'])
+    speedup_copy['performance_category'] = pd.cut(speedup_copy['avg_speedup'], 
+                                                 bins=speedup_bins,
+                                                 labels=speedup_labels,
+                                                 include_lowest=True)
     
-    category_stats = speedup_copy.groupby('category').agg({
-        'avg_speedup': ['mean', 'std', 'count'],
-        'avg_mv_time': 'mean',
-        'avg_immv_time': 'mean'
-    })
+    category_counts = speedup_copy['performance_category'].value_counts().reindex(speedup_labels, fill_value=0)
+    colors_perf = ['#FF4444', '#FF8888', '#FFDD44', '#88DD88', '#44AA44']
     
-    category_stats.columns = ['mean_speedup', 'std_speedup', 'count', 'mean_mv_time', 'mean_immv_time']
-    category_stats = category_stats.reset_index()
+    bars = ax2.bar(range(len(category_counts)), category_counts.values, 
+                  color=colors_perf, alpha=0.7, edgecolor='black', linewidth=0.5)
     
-    bars = ax2.bar(category_stats['category'], category_stats['mean_speedup'], 
-                  yerr=category_stats['std_speedup'], capsize=5, alpha=0.7, 
-                  color=[colors[1] if x > 1 else colors[2] for x in category_stats['mean_speedup']])
-    
-    ax2.axhline(y=1, color='red', linestyle='--', alpha=0.7, label='Equal Performance')
-    ax2.set_title('Average Speedup by Write Index Categories', fontweight='bold', fontsize=14)
-    ax2.set_ylabel('Average Speedup Factor', fontsize=12)
-    ax2.set_xlabel('Write Index Categories', fontsize=12)
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
+    ax2.set_title('Distribution of SQL Statements by Performance Category', fontweight='bold', fontsize=14)
+    ax2.set_ylabel('Number of SQL Statements', fontsize=12)
+    ax2.set_xlabel('Performance Category', fontsize=12)
+    ax2.set_xticks(range(len(category_counts)))
+    ax2.set_xticklabels(speedup_labels, rotation=0, ha='center')
+    ax2.grid(True, alpha=0.3, axis='y')
     
     # Add value labels on bars
     for i, bar in enumerate(bars):
         height = bar.get_height()
-        count = category_stats.iloc[i]['count']
+        percentage = (height / len(speedup_by_write_index)) * 100
         ax2.text(bar.get_x() + bar.get_width()/2., height,
-                f'{height:.2f}x\n(n={count})', ha='center', va='bottom', 
+                f'{int(height)}\n({percentage:.1f}%)', ha='center', va='bottom', 
                 fontweight='bold', fontsize=10)
     
     # 4. Execution Time Comparison with Trend Analysis
@@ -273,35 +270,62 @@ def create_enhanced_visualizations(merged_data, speedup_by_write_index, overall_
     cbar = plt.colorbar(scatter, ax=ax3)
     cbar.set_label('Speedup Factor', fontsize=12)
     
-    # 5. Time Component Breakdown
+    # 5. Execution Time Analysis by Statement Complexity
     ax4 = fig.add_subplot(gs[2, 2:])
     
-    # Sample representative data points for breakdown
-    sample_indices = np.linspace(0, len(speedup_by_write_index)-1, 
-                                min(20, len(speedup_by_write_index)), dtype=int)
-    sample_data = speedup_by_write_index.iloc[sample_indices].copy()
+    # Analyze performance by execution time ranges (proxy for statement complexity)
+    speedup_copy = speedup_by_write_index.copy()
     
-    x = np.arange(len(sample_data))
-    width = 0.35
+    # Create complexity categories based on IMMV execution time
+    immv_time_bins = [0, 1, 5, 20, 100, float('inf')]
+    complexity_labels = ['Very Simple\n(<1ms)', 'Simple\n(1-5ms)', 
+                        'Moderate\n(5-20ms)', 'Complex\n(20-100ms)', 'Very Complex\n(>100ms)']
     
-    # Calculate write and refresh components for MV
-    mv_write_component = sample_data['avg_mv_time'] * 0.7  # Approximate split
-    mv_refresh_component = sample_data['avg_mv_time'] * 0.3
+    speedup_copy['complexity_category'] = pd.cut(speedup_copy['avg_immv_time'], 
+                                               bins=immv_time_bins,
+                                               labels=complexity_labels,
+                                               include_lowest=True)
     
-    bars1 = ax4.bar(x - width/2, mv_write_component, width, label='MV Write', 
-                   alpha=0.8, color=colors[0])
-    bars2 = ax4.bar(x - width/2, mv_refresh_component, width, bottom=mv_write_component,
-                   label='MV Refresh', alpha=0.8, color=colors[1])
-    bars3 = ax4.bar(x + width/2, sample_data['avg_immv_time'], width, 
-                   label='IMMV Total', alpha=0.8, color=colors[2])
+    complexity_stats = speedup_copy.groupby('complexity_category', observed=True).agg({
+        'avg_speedup': ['mean', 'std', 'count'],
+        'avg_mv_time': 'mean',
+        'avg_immv_time': 'mean'
+    })
     
-    ax4.set_title('Time Component Breakdown (Sample)', fontweight='bold', fontsize=14)
-    ax4.set_ylabel('Execution Time (milliseconds)', fontsize=12)
-    ax4.set_xlabel('Sample Write Indices', fontsize=12)
-    ax4.set_xticks(x)
-    ax4.set_xticklabels([f"{int(idx)}" for idx in sample_data['write_index']], rotation=45)
-    ax4.legend()
-    ax4.grid(True, alpha=0.3)
+    complexity_stats.columns = ['mean_speedup', 'std_speedup', 'count', 'mean_mv_time', 'mean_immv_time']
+    complexity_stats = complexity_stats.reset_index()
+    
+    # Filter out categories with no data
+    complexity_stats = complexity_stats[complexity_stats['count'] > 0]
+    
+    if len(complexity_stats) > 0:
+        x = np.arange(len(complexity_stats))
+        width = 0.35
+        
+        bars1 = ax4.bar(x - width/2, complexity_stats['mean_mv_time'], width, 
+                       label='MV (Write + Refresh)', alpha=0.7, color=colors[0])
+        bars2 = ax4.bar(x + width/2, complexity_stats['mean_immv_time'], width, 
+                       label='IMMV (Write Only)', alpha=0.7, color=colors[2])
+        
+        ax4.set_title('Performance by Statement Complexity\n(Based on Execution Time)', fontweight='bold', fontsize=14)
+        ax4.set_ylabel('Average Execution Time (milliseconds)', fontsize=12)
+        ax4.set_xlabel('Statement Complexity Category', fontsize=12)
+        ax4.set_xticks(x)
+        ax4.set_xticklabels([cat for cat in complexity_stats['complexity_category']], rotation=0)
+        ax4.legend()
+        ax4.grid(True, alpha=0.3, axis='y')
+        
+        # Add speedup labels above bars
+        for i, (bar1, bar2) in enumerate(zip(bars1, bars2)):
+            speedup = complexity_stats.iloc[i]['mean_speedup']
+            count = complexity_stats.iloc[i]['count']
+            max_height = max(bar1.get_height(), bar2.get_height())
+            ax4.text(i, max_height * 1.1, f'{speedup:.1f}x\n(n={count})', 
+                    ha='center', va='bottom', fontweight='bold', fontsize=9,
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8))
+    else:
+        ax4.text(0.5, 0.5, 'No data available for complexity analysis', 
+                transform=ax4.transAxes, ha='center', va='center', fontsize=12)
     
     # 6. Performance Insights Panel
     ax5 = fig.add_subplot(gs[3, :])
@@ -317,10 +341,10 @@ def create_enhanced_visualizations(merged_data, speedup_by_write_index, overall_
     
     insights_text = f"""
     KEY INSIGHTS:
-    • IMMV Performance: {immv_better_pct:.1f}% of cases show IMMV outperforming MV ({immv_better_count}/{len(merged_data)} cases)
-    • Significant Advantages: {high_speedup_count} cases show >5x IMMV speedup | {low_speedup_count} cases show >2x MV advantage
-    • Trade-off Pattern: IMMV excels in frequent small updates, MV better for batch operations with infrequent refresh needs
-    • Recommendation Threshold: Consider IMMV when average speedup consistently > 2x for your workload pattern
+    • IMMV Performance: {immv_better_pct:.1f}% of SQL statements show IMMV outperforming MV ({immv_better_count}/{len(merged_data)} statements)
+    • Significant Advantages: {high_speedup_count} statements show >5x IMMV speedup | {low_speedup_count} statements show >2x MV advantage
+    • Performance Pattern: IMMV typically excels with simpler statements, MV better for complex operations requiring batch processing
+    • SQL Workload Recommendation: Analyze your specific SQL statement patterns rather than relying on arbitrary line numbers
     """
     
     ax5.text(0.05, 0.5, insights_text, transform=ax5.transAxes, 
@@ -340,28 +364,38 @@ def create_decision_matrix_plot(speedup_by_write_index, overall_stats):
     """Create a decision matrix visualization for choosing between MV and IMMV."""
     
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
-    fig.suptitle('MV vs IMMV Decision Matrix', fontsize=16, fontweight='bold')
+    fig.suptitle('MV vs IMMV Decision Analysis', fontsize=16, fontweight='bold')
     
-    # 1. Performance vs Write Frequency Decision Chart
+    # 1. Performance Distribution Matrix
     speedup_copy = speedup_by_write_index.copy()
-    speedup_copy['write_frequency_category'] = pd.cut(speedup_copy['write_index'], 
-                                                     bins=[0, 25, 100, 300, float('inf')],
-                                                     labels=['Very Frequent', 'Frequent', 'Moderate', 'Infrequent'])
+    
+    # Create execution time categories (proxy for statement complexity)
+    speedup_copy['execution_time_category'] = pd.cut(speedup_copy['avg_immv_time'], 
+                                                    bins=[0, 1, 5, 20, float('inf')],
+                                                    labels=['Fast (<1ms)', 'Medium (1-5ms)', 
+                                                           'Slow (5-20ms)', 'Very Slow (>20ms)'])
     
     speedup_copy['performance_category'] = pd.cut(speedup_copy['avg_speedup'], 
                                                  bins=[0, 0.5, 2, 5, float('inf')],
-                                                 labels=['MV Much Better', 'MV Better', 'IMMV Better', 'IMMV Much Better'])
+                                                 labels=['MV Much Better', 'MV/IMMV Similar', 
+                                                        'IMMV Better', 'IMMV Much Better'])
     
     # Create heatmap data
-    decision_matrix = speedup_copy.groupby(['write_frequency_category', 'performance_category']).size().unstack(fill_value=0)
+    decision_matrix = speedup_copy.groupby(['execution_time_category', 'performance_category']).size().unstack(fill_value=0)
     
-    sns.heatmap(decision_matrix, annot=True, fmt='d', cmap='RdYlBu_r', ax=ax1, cbar_kws={'label': 'Count'})
-    ax1.set_title('Decision Matrix: Write Frequency vs Performance', fontweight='bold')
-    ax1.set_xlabel('Performance Category')
-    ax1.set_ylabel('Write Frequency Category')
+    if not decision_matrix.empty:
+        sns.heatmap(decision_matrix, annot=True, fmt='d', cmap='RdYlBu_r', ax=ax1, 
+                   cbar_kws={'label': 'Number of Statements'})
+        ax1.set_title('Statement Performance by Execution Time', fontweight='bold')
+        ax1.set_xlabel('Performance Outcome')
+        ax1.set_ylabel('Statement Execution Time Category')
+        ax1.tick_params(axis='x', rotation=45)
+    else:
+        ax1.text(0.5, 0.5, 'Insufficient data for matrix analysis', 
+                transform=ax1.transAxes, ha='center', va='center')
     
-    # 2. Recommendation Zones
-    x = speedup_by_write_index['write_index']
+    # 2. Speedup vs Execution Time Scatter
+    x = speedup_by_write_index['avg_immv_time']
     y = speedup_by_write_index['avg_speedup']
     
     colors_map = ['red' if speedup < 0.5 else 'orange' if speedup < 1 else 'lightgreen' if speedup < 2 else 'darkgreen' 
@@ -374,18 +408,19 @@ def create_decision_matrix_plot(speedup_by_write_index, overall_stats):
     ax2.axhline(y=2, color='green', linestyle='--', alpha=0.6, label='Strong IMMV Preference')
     ax2.axhline(y=0.5, color='red', linestyle='--', alpha=0.6, label='Strong MV Preference')
     
-    # Create x range for fill_between
-    x_range = [x.min(), x.max()]
+    # Create x range for fill_between (using log scale)
+    ax2.set_xscale('log')
+    x_min, x_max = x.min() * 0.9, x.max() * 1.1
     
-    ax2.fill_between(x_range, [2, 2], [100, 100], alpha=0.1, color='green', label='IMMV Recommended Zone')
-    ax2.fill_between(x_range, [0, 0], [0.5, 0.5], alpha=0.1, color='red', label='MV Recommended Zone')
-    ax2.fill_between(x_range, [0.5, 0.5], [2, 2], alpha=0.1, color='yellow', label='Context-Dependent Zone')
+    ax2.fill_between([x_min, x_max], [2, 2], [100, 100], alpha=0.1, color='green', label='IMMV Recommended')
+    ax2.fill_between([x_min, x_max], [0.01, 0.01], [0.5, 0.5], alpha=0.1, color='red', label='MV Recommended')
+    ax2.fill_between([x_min, x_max], [0.5, 0.5], [2, 2], alpha=0.1, color='yellow', label='Context-Dependent')
     
-    ax2.set_xlim(x.min() * 0.9, x.max() * 1.1)
-    ax2.set_ylim(0, max(y.max() * 1.1, 10))
-    ax2.set_title('Recommendation Zones by Write Index', fontweight='bold')
-    ax2.set_xlabel('Write Index')
-    ax2.set_ylabel('Average Speedup Factor')
+    ax2.set_xlim(x_min, x_max)
+    ax2.set_ylim(0.01, max(y.max() * 1.1, 10))
+    ax2.set_title('Performance vs Statement Execution Time', fontweight='bold')
+    ax2.set_xlabel('IMMV Execution Time (milliseconds, log scale)')
+    ax2.set_ylabel('Speedup Factor (MV/IMMV)')
     ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     ax2.grid(True, alpha=0.3)
     
@@ -455,14 +490,14 @@ def print_enhanced_summary_statistics(merged_data, speedup_by_write_index, overa
     best_performers = speedup_by_write_index.nlargest(5, 'avg_speedup')
     worst_performers = speedup_by_write_index.nsmallest(5, 'avg_speedup')
     
-    print(f"\nWRITE INDEX PATTERN ANALYSIS:")
-    print(f"Best IMMV Performance (Top 5 Write Indices):")
+    print(f"\nSQL STATEMENT PATTERN ANALYSIS:")
+    print(f"Best IMMV Performance (Top 5 SQL Statements):")
     for _, row in best_performers.iterrows():
-        print(f"  • Write Index {int(row['write_index'])}: {row['avg_speedup']:.2f}x speedup")
+        print(f"  • Statement at line {int(row['write_index'])}: {row['avg_speedup']:.2f}x speedup")
     
-    print(f"\nWorst IMMV Performance (Bottom 5 Write Indices):")
+    print(f"\nWorst IMMV Performance (Bottom 5 SQL Statements):")
     for _, row in worst_performers.iterrows():
-        print(f"  • Write Index {int(row['write_index'])}: {row['avg_speedup']:.2f}x speedup")
+        print(f"  • Statement at line {int(row['write_index'])}: {row['avg_speedup']:.2f}x speedup")
 
 def main():
     """Main function to run the enhanced analysis."""
