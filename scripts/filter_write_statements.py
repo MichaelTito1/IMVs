@@ -20,6 +20,22 @@ def parse_args():
                        help='Output format: csv (default) or sql statements only')
     return parser.parse_args()
 
+def add_suffix_to_sql(sql_statement, suffix="RETURNING 1"):
+    """
+    Add 'RETURNING 1' clause to the end of each SQL write statement.
+    """
+
+    sql = sql_statement.strip()
+    if not sql:
+        return sql
+    
+    if sql.endswith(';'):
+        sql = sql[:-1] + f" {suffix};"
+    else:
+        sql += f" {suffix};"
+
+    return sql
+
 def filter_write_statements(input_file, output_file, output_format='csv'):
     """Filter write statements from the workload CSV file and remove duplicates."""
     write_types = {'insert', 'update', 'delete'}
@@ -38,7 +54,8 @@ def filter_write_statements(input_file, output_file, output_format='csv'):
     for stmt in write_statements:
         sql = stmt.get('sql', '').strip()
         if sql:
-            stmt['sql'] = remove_table_suffixes(sql)
+            cleaned_sql = remove_table_suffixes(sql)
+            stmt['sql'] = add_suffix_to_sql(cleaned_sql)
     
     # Deduplicate by cleaned SQL
     unique = []
