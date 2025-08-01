@@ -109,7 +109,7 @@ class PostgreSQLBenchmark(BaseballDB):
                 result['plan_execution_time'] = plan_result[0]['Execution Time'] if plan_result else None
                 result['plan'] = plan_result[0]['Plan'] if plan_result else None
                 result['triggers'] = plan_result[0]['Triggers'] if 'Triggers' in plan_result[0] else None
-                result['rows_affected'] = self.cursor.rowcount
+                result['rows_affected'] = result['plan']['Actual Rows']
                 
                 # Extract rows inserted from plan for INSERT operations
                 if statement.strip().upper().startswith('INSERT') and result['plan']:
