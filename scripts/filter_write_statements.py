@@ -14,7 +14,7 @@ from utils import remove_table_suffixes
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Filter write statements from workload.csv.')
-    parser.add_argument('--input', default='/app/data/workload.csv', help='Input workload CSV file')
+    parser.add_argument('--input', default='/app/data/write_workload.csv', help='Input workload CSV file')
     parser.add_argument('--output', default='/app/data/write_statements.csv', help='Output file for write statements')
     parser.add_argument('--format', choices=['csv', 'sql'], default='csv', 
                        help='Output format: csv (default) or sql statements only')
@@ -38,16 +38,13 @@ def add_suffix_to_sql(sql_statement, suffix="RETURNING 1"):
 
 def filter_write_statements(input_file, output_file, output_format='csv'):
     """Filter write statements from the workload CSV file and remove duplicates."""
-    write_types = {'insert', 'update', 'delete'}
     write_statements = []
     
     print(f"Reading workload from: {input_file}")
     with open(input_file, 'r', encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
-            query_type = row.get('query_type', '').lower().strip()
-            if query_type in write_types:
-                write_statements.append(row)
+            write_statements.append(row)
     
     print(f"Found {len(write_statements)} write statements (including duplicates)")
     # Clean SQL and remove table suffixes

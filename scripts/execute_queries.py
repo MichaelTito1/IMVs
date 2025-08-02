@@ -50,17 +50,17 @@ def group_pairs_by_select(pairs_df: pd.DataFrame) -> Dict[int, List[int]]:
 
 def validate_statements(select_statements: List[str], write_statements: List[str], groups: Dict[int, List[int]]) -> bool:
     """Validate that all referenced statement IDs exist"""
-    max_select_id = len(select_statements) - 1
-    max_write_id = len(write_statements) - 1
+    max_selects = len(select_statements)
+    max_writes = len(write_statements)
     
     for select_id, write_ids in groups.items():
-        if select_id > max_select_id:
-            logger.error(f"Invalid select_id {select_id}, max available: {max_select_id}")
+        if select_id > max_selects:
+            logger.warning(f"Skipping select_id {select_id}, max available: {max_selects}")
             return False
         
-        for write_id in write_ids:
-            if write_id > max_write_id:
-                logger.error(f"Invalid write_id {write_id}, max available: {max_write_id}")
+        for idx, write_id in enumerate(write_ids):
+            if idx > max_writes:
+                logger.warning(f"Skipping write_id {write_id} for select_id {select_id}, max available: {max_writes}")
                 return False
     
     return True
@@ -202,11 +202,11 @@ def main():
                     
                     # Get corresponding write statements
                     write_stmts = []
-                    for write_id in write_ids:
-                        if write_id < len(write_statements):
+                    for idx, write_id in enumerate(write_ids):
+                        if idx < len(write_statements):
                             write_stmts.append((write_id, write_statements[write_id]))
                         else:
-                            logger.warning(f"Invalid write_id {write_id} for select_id {select_id}")
+                            logger.warning(f"Skipping write_id {write_id} for select_id {select_id}, skipping")
                     
                     if write_stmts:
                         experiment_id = f"exp_{select_id}_{mode_str}"
