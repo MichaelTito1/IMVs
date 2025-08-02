@@ -96,12 +96,27 @@ def compute_speedup_analysis(df):
     # Calculate IMMV times
     immv_times = calculate_immv_time(df)
     
-    # Merge the data
+    # Get rows_affected data from original dataframe for IMMV writes
+    immv_cardinality = df[
+        (df['configuration'] == 'incremental_view') & 
+        (df['operation_type'] == 'write') &
+        (df['write_index'].notna())
+    ][['experiment_id', 'write_index', 'rows_affected']].copy()
+    
+    # Merge the data including cardinality information
     merged = pd.merge(
         mv_times, 
         immv_times, 
         on=['experiment_id', 'write_index'],
         how='inner'
+    )
+    
+    # Add cardinality data
+    merged = pd.merge(
+        merged,
+        immv_cardinality,
+        on=['experiment_id', 'write_index'],
+        how='left'
     )
     
     if len(merged) == 0:
@@ -115,11 +130,12 @@ def compute_speedup_analysis(df):
     speedup_by_write_index = merged.groupby('write_index').agg({
         'speedup': ['mean', 'std', 'count'],
         'total_time': 'mean',
-        'immv_time': 'mean'
+        'immv_time': 'mean',
+        'rows_affected': 'mean'
     }).round(3)
     
     # Flatten column names
-    speedup_by_write_index.columns = ['avg_speedup', 'std_speedup', 'count', 'avg_mv_time', 'avg_immv_time']
+    speedup_by_write_index.columns = ['avg_speedup', 'std_speedup', 'count', 'avg_mv_time', 'avg_immv_time', 'avg_rows_affected']
     speedup_by_write_index = speedup_by_write_index.reset_index()
     
     # Overall statistics
@@ -433,6 +449,79 @@ def create_decision_matrix_plot(speedup_by_write_index, overall_stats):
     
     plt.show()
 
+def create_cardinality_speedup_histogram(merged_data):
+    """Create histogram showing relationship between rows_affected (cardinality) and speedup."""
+    
+    if 'rows_affected' not in merged_data.columns:
+        print("Warning: 'rows_affected' column not found in data")
+        return
+    
+    # Remove rows with missing or zero cardinality data
+    data_clean = merged_data[(merged_data['rows_affected'].notna()) & (merged_data['rows_affected'] > 0)].copy()
+    
+    if len(data_clean) == 0:
+        print("Warning: No valid cardinality data available")
+        return
+    
+    # Create cardinality bins
+    cardinality_bins = [0, 100, 1000, 10000, 100000, float('inf')]
+    cardinality_labels = ['1-100', '101-1K', '1K-10K', '10K-100K', '100K+']
+    data_clean['cardinality_category'] = pd.cut(data_clean['rows_affected'], 
+                                               bins=cardinality_bins, 
+                                               labels=cardinality_labels, 
+                                               right=False)
+    
+    # Calculate speedup statistics by cardinality category
+    cardinality_stats = data_clean.groupby('cardinality_category').agg({
+        'speedup': ['mean', 'std', 'count']
+    }).round(3)
+    cardinality_stats.columns = ['mean_speedup', 'std_speedup', 'count']
+    cardinality_stats = cardinality_stats.reset_index()
+    
+    # Create histogram
+    fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+    
+    bars = ax.bar(cardinality_stats['cardinality_category'], 
+                  cardinality_stats['mean_speedup'],
+                  yerr=cardinality_stats['std_speedup'], 
+                  capsize=5, alpha=0.7,
+                  color=['green' if x > 1 else 'red' for x in cardinality_stats['mean_speedup']],
+                  edgecolor='black', linewidth=0.5)
+    
+    # Add reference line and labels
+    ax.axhline(y=1, color='red', linestyle='--', alpha=0.7, label='Equal Performance')
+    ax.set_title('IMMV vs MV Performance by Data Cardinality\n(Rows Affected per Write Operation)', 
+                fontweight='bold', fontsize=14)
+    ax.set_xlabel('Rows Affected per Write', fontsize=12)
+    ax.set_ylabel('Average Speedup Factor (MV Time / IMMV Time)', fontsize=12)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Add value and count labels on bars
+    for i, bar in enumerate(bars):
+        height = bar.get_height()
+        count = cardinality_stats.iloc[i]['count']
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+               f'{height:.2f}x\n(n={count})', 
+               ha='center', va='bottom', fontweight='bold', fontsize=10)
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    output_file = '/app/data/results/cardinality_speedup_histogram.png'
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    print(f"Cardinality histogram saved as '{output_file}'")
+    
+    plt.show()
+    
+    # Print summary statistics
+    print(f"\nCardinality vs Speedup Analysis:")
+    print(f"{'Cardinality':<15} {'Avg Speedup':<12} {'Count':<8} {'Recommendation'}")
+    print("-" * 55)
+    for _, row in cardinality_stats.iterrows():
+        recommendation = "IMMV" if row['mean_speedup'] > 1.2 else "MV" if row['mean_speedup'] < 0.8 else "Mixed"
+        print(f"{row['cardinality_category']:<15} {row['mean_speedup']:<12.2f} {row['count']:<8} {recommendation}")
+
 def print_enhanced_summary_statistics(merged_data, speedup_by_write_index, overall_stats):
     """Print enhanced summary statistics with actionable insights."""
     
@@ -533,6 +622,10 @@ def main():
     # Create decision matrix
     print("\nCreating decision matrix...")
     create_decision_matrix_plot(speedup_by_write_index, overall_stats)
+
+    # Create cardinality vs speedup histogram - pass merged_data which now contains rows_affected
+    print("\nCreating cardinality vs speedup histogram...")
+    create_cardinality_speedup_histogram(merged_data)
     
     # Save detailed results to CSV
     output_csv = '/app/data/results/enhanced_speedup_analysis_results.csv'
