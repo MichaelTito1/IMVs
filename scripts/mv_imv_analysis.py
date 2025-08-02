@@ -456,8 +456,13 @@ def create_cardinality_speedup_histogram(merged_data):
         print("Warning: 'rows_affected' column not found in data")
         return
     
-    # Remove rows with missing or zero cardinality data
-    data_clean = merged_data[(merged_data['rows_affected'].notna()) & (merged_data['rows_affected'] > 0)].copy()
+    # Remove rows with missing or zero cardinality data and invalid speedup values
+    data_clean = merged_data[
+        (merged_data['rows_affected'].notna()) & 
+        (merged_data['rows_affected'] > 0) &
+        (merged_data['speedup'].notna()) &
+        (np.isfinite(merged_data['speedup']))
+    ].copy()
     
     if len(data_clean) == 0:
         print("Warning: No valid cardinality data available")
@@ -477,6 +482,20 @@ def create_cardinality_speedup_histogram(merged_data):
     }).round(3)
     cardinality_stats.columns = ['mean_speedup', 'std_speedup', 'count']
     cardinality_stats = cardinality_stats.reset_index()
+    
+    # Remove categories with no data or invalid values
+    cardinality_stats = cardinality_stats[
+        (cardinality_stats['count'] > 0) &
+        (cardinality_stats['mean_speedup'].notna()) &
+        (np.isfinite(cardinality_stats['mean_speedup']))
+    ]
+    
+    if len(cardinality_stats) == 0:
+        print("Warning: No valid cardinality statistics available for plotting")
+        return
+    
+    # Replace NaN standard deviations with 0
+    cardinality_stats['std_speedup'] = cardinality_stats['std_speedup'].fillna(0)
     
     # Create histogram
     fig, ax = plt.subplots(1, 1, figsize=(12, 8))
@@ -501,9 +520,11 @@ def create_cardinality_speedup_histogram(merged_data):
     for i, bar in enumerate(bars):
         height = bar.get_height()
         count = cardinality_stats.iloc[i]['count']
-        ax.text(bar.get_x() + bar.get_width()/2., height,
-               f'{height:.2f}x\n(n={count})', 
-               ha='center', va='bottom', fontweight='bold', fontsize=10)
+        # Ensure height is finite before plotting text
+        if np.isfinite(height):
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'{height:.2f}x\n(n={count})', 
+                   ha='center', va='bottom', fontweight='bold', fontsize=10)
     
     plt.tight_layout()
     
