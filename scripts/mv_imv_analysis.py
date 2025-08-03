@@ -87,9 +87,7 @@ def calculate_immv_time(df):
     
     return pd.DataFrame(immv_grouped)
 
-def compute_speedup_analysis(df):
-    """Compute speedup analysis between MV and IMMV setups."""
-    
+def get_merged_data(df):
     # Calculate MV total times (write + refresh)
     mv_times = calculate_mv_total_time(df)
     
@@ -125,7 +123,15 @@ def compute_speedup_analysis(df):
     
     # Calculate speedup (MV_time / IMMV_time)
     merged['speedup'] = merged['total_time'] / merged['immv_time']
-    
+    return merged
+
+def compute_speedup_analysis(df):
+    """Compute speedup analysis between MV and IMMV setups."""
+
+    merged = get_merged_data(df)
+    if merged is None:
+        return None, None, None
+
     # Calculate average speedup across all experiments for each write_index
     speedup_by_write_index = merged.groupby('write_index').agg({
         'speedup': ['mean', 'std', 'count'],
@@ -469,8 +475,8 @@ def create_cardinality_speedup_histogram(merged_data):
         return
     
     # Create cardinality bins
-    cardinality_bins = [0, 100, 1000, 10000, 100000, float('inf')]
-    cardinality_labels = ['1-100', '101-1K', '1K-10K', '10K-100K', '100K+']
+    cardinality_bins = [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 2000, 10000, 100000, float('inf')]
+    cardinality_labels = ['1-100', '101-200', '201-300', '301-400', '401-500', '501-600', '601-700', '701-800', '801-900', '901-1K', '1K-2K', '2K-10K', '10K-100K', '100K+']
     data_clean['cardinality_category'] = pd.cut(data_clean['rows_affected'], 
                                                bins=cardinality_bins, 
                                                labels=cardinality_labels, 
@@ -572,14 +578,14 @@ def print_enhanced_summary_statistics(merged_data, speedup_by_write_index, overa
     
     # Categorized analysis
     high_speedup = len(merged_data[merged_data['speedup'] > 5])
-    moderate_speedup = len(merged_data[(merged_data['speedup'] > 2) & (merged_data['speedup'] <= 5)])
-    low_speedup = len(merged_data[merged_data['speedup'] < 0.5])
+    moderate_speedup = len(merged_data[(merged_data['speedup'] > 1.1) & (merged_data['speedup'] <= 5)])
+    low_speedup = len(merged_data[merged_data['speedup'] < 0.9])
     
     print(f"\nSPEEDUP INTENSITY ANALYSIS:")
     print(f"• High IMMV advantage (>5x): {high_speedup} cases ({high_speedup/len(merged_data)*100:.1f}%)")
-    print(f"• Moderate IMMV advantage (2-5x): {moderate_speedup} cases ({moderate_speedup/len(merged_data)*100:.1f}%)")
-    print(f"• Strong MV advantage (<0.5x): {low_speedup} cases ({low_speedup/len(merged_data)*100:.1f}%)")
-    
+    print(f"• Moderate IMMV advantage (1.1-5x): {moderate_speedup} cases ({moderate_speedup/len(merged_data)*100:.1f}%)")
+    print(f"• Strong MV advantage (<0.9x): {low_speedup} cases ({low_speedup/len(merged_data)*100:.1f}%)")
+
     print(f"\nACTIONABLE RECOMMENDATIONS:")
     print("-" * 50)
     
