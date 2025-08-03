@@ -18,6 +18,9 @@ class PostgreSQLBenchmark(BaseballDB):
         # Initialize parent class
         super().__init__(host=host, port=port, user=user, password=password, db_name=db_name)
         self.results = []
+        self._metadata_cache = {}  # Cache for write statement metadata
+        self._metadata_loaded = False
+        self._last_saved_index = 0  # Track how many results we've already saved
         
     def connect(self):
         """Connect to PostgreSQL database and enable pg_ivm extension"""
@@ -390,106 +393,155 @@ class PostgreSQLBenchmark(BaseballDB):
         logger.info(f"Completed experiment {experiment_id}")
         return experiment_results
 
-    def _get_write_statement_metadata(self, write_index: int) -> Dict[str, Any]:
-        """
-        Given the write statement index (the row number) in the write_workload.sql file, it opens the write_workload.csv file, find the write statement with the same index, and
-            returns the following data:
-            - query_type
-            - num_joins
-            - num_scans
-            - num_aggregations
-            - start_table
-            - join_tables
-            - write_table
-        """
-        metadata = {}
-        
+    def _load_write_metadata_cache(self):
+        """Load all write statement metadata into cache once"""
+        if self._metadata_loaded:
+            return
+            
         try:
             # TODO: Specify argument for path to write_workload.csv
-            # TODO: write more efficient code to read the file
             with open('/app/data/write_workload.csv', 'r', encoding='utf-8') as csvfile:
                 reader = csv.DictReader(csvfile)
                 for idx, row in enumerate(reader):
-                    if idx == write_index:
-                        metadata = {
-                            'query_type': row.get('query_type', ''),
-                            'num_joins': int(row.get('num_joins', 0)),
-                            'num_scans': int(row.get('num_scans', 0)),
-                            'num_aggregations': int(row.get('num_aggregations', 0)),
-                            'start_table': remove_table_suffixes(row.get('start_t', '')),
-                            'join_tables': [remove_table_suffixes(t) for t in row.get('join_tables', '').split(',') if t],
-                            'write_table': remove_table_suffixes(row.get('write_table', '')),
-                        }
-                        break
+                    self._metadata_cache[idx] = {
+                        'query_type': row.get('query_type', ''),
+                        'num_joins': int(row.get('num_joins', 0)),
+                        'num_scans': int(row.get('num_scans', 0)),
+                        'num_aggregations': int(row.get('num_aggregations', 0)),
+                        'start_table': remove_table_suffixes(row.get('start_t', '')),
+                        'join_tables': [remove_table_suffixes(t) for t in row.get('join_tables', '').split(',') if t],
+                        'write_table': remove_table_suffixes(row.get('write_table', '')),
+                    }
+            self._metadata_loaded = True
+            logger.info(f"Loaded metadata for {len(self._metadata_cache)} write statements")
         except Exception as e:
-            logger.error(f"Error reading write statement metadata: {e}", exc_info=True)
-        
-        return metadata
+            logger.error(f"Error loading write statement metadata cache: {e}", exc_info=True)
 
-    def save_results_to_csv(self, filename: str = "benchmark_results.csv"):
+    def _get_write_statement_metadata(self, write_index: int) -> Dict[str, Any]:
         """
-        Save all results to a CSV file.
-        Modified to include new batch-related fields.
+        Get write statement metadata from cache
+        """
+        if not self._metadata_loaded:
+            self._load_write_metadata_cache()
+        
+        return self._metadata_cache.get(write_index, {})
+
+    def _flatten_single_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Flatten a single result for CSV export"""
+        flat_result = {
+            'experiment_id': result.get('experiment_id', ''),
+            'configuration': result.get('configuration', ''),
+            'operation_type': result.get('operation_type', ''),
+            'write_index': result.get('write_index', ''),
+            'execution_time': result.get('execution_time', 0),
+            'plan_execution_time': result.get('plan_execution_time', 0),
+            'rows_affected': result.get('rows_affected', 0),
+            'rows_inserted': result.get('rows_inserted', 0),
+            'batch_mode': result.get('batch_mode', False),
+            'batch_size': result.get('batch_size', 1),
+            'error': result.get('error', ''),
+            'statement': result.get('statement', '')[:200],  # Truncate for CSV
+            'plan_total_cost': 0,
+            'plan_actual_time': 0,
+            'plan_node_type': '',
+            'plan': '',
+            'triggers': '',
+            'query_type': '',
+            'num_joins': 0,
+            'num_scans': 0,
+            'num_aggregations': 0,
+            'start_table': '',
+            'join_tables': '',
+            'write_table': ''
+        }
+        
+        # Add metadata if this is a write operation
+        if flat_result['write_index'] != '':
+            try:
+                write_index = int(flat_result['write_index'])
+                metadata = self._get_write_statement_metadata(write_index)
+                flat_result.update(metadata)
+            except (ValueError, TypeError):
+                pass  # Skip invalid write_index
+        
+        # Add plan information if available
+        if result.get('plan'):
+            try:
+                plan = result['plan']
+                if isinstance(plan, dict):
+                    flat_result['plan_total_cost'] = plan.get('Total Cost', 0)
+                    flat_result['plan_actual_time'] = plan.get('Actual Total Time', 0)
+                    flat_result['plan_node_type'] = plan.get('Node Type', '')
+                    flat_result['plan'] = json.dumps(plan, ensure_ascii=False)
+            except Exception as e:
+                logger.warning(f"Error processing plan data: {e}")
+        
+        # Add triggers information
+        if result.get('triggers'):
+            try:
+                flat_result['triggers'] = json.dumps(result.get('triggers', []), ensure_ascii=False)
+            except Exception as e:
+                logger.warning(f"Error processing triggers data: {e}")
+        
+        return flat_result
+
+    def save_results_to_csv(self, filename: str = "benchmark_results.csv", append_mode: bool = False):
+        """
+        Save all results to a CSV file efficiently.
+        If append_mode is True, only save new results since last save.
         """
         if not self.results:
             logger.warning("No results to save")
             return
         
-        # Flatten the results for CSV export
-        flattened_results = []
+        # Ensure metadata cache is loaded
+        self._load_write_metadata_cache()
         
-        for result in self.results:
-            logger.debug(f"Flattening result: {list(result.keys())}")
-            flat_result = {
-                'experiment_id': result.get('experiment_id', ''),
-                'configuration': result.get('configuration', ''),
-                'operation_type': result.get('operation_type', ''),
-                'write_index': result.get('write_index', ''),
-                'execution_time': result.get('execution_time', 0),
-                'plan_execution_time': result.get('plan_execution_time', 0),
-                'rows_affected': result.get('rows_affected', 0),
-                'rows_inserted': result.get('rows_inserted', 0),
-                'batch_mode': result.get('batch_mode', False),
-                'batch_size': result.get('batch_size', 1),
-                'error': result.get('error', ''),
-                'statement': result.get('statement', '')[:200],  # Truncate for CSV
-            }
-            # Add metadata using write_index from flat_result
-            if 'write_index' in flat_result and flat_result['write_index'] != '':
-                write_index = int(flat_result['write_index'])
-                metadata = self._get_write_statement_metadata(write_index)
-                flat_result.update(metadata)
-            
-            # Add plan information if available
-            if result.get('plan'):
-                try:
-                    plan = result['plan']
-                    
-                    if isinstance(plan, dict):
-                        flat_result['plan_total_cost'] = plan.get('Total Cost', 0)
-                        flat_result['plan_actual_time'] = plan.get('Actual Total Time', 0)
-                        flat_result['plan_node_type'] = plan.get('Node Type', '')
-                        flat_result['plan'] = json.dumps(plan, ensure_ascii=False)
-                except Exception as e:
-                    logger.warning(f"Error processing plan data: {e}", exc_info=True)
-            
-            flat_result['triggers'] = json.dumps(result.get('triggers', []), ensure_ascii=False) if result.get('triggers') else ''
-            flattened_results.append(flat_result)
+        # Define fieldnames once
+        fieldnames = [
+            'experiment_id', 'configuration', 'operation_type', 'write_index',
+            'execution_time', 'plan_execution_time', 'rows_affected', 'rows_inserted',
+            'batch_mode', 'batch_size', 'error', 'statement',
+            'plan_total_cost', 'plan_actual_time', 'plan_node_type', 'plan', 'triggers',
+            'query_type', 'num_joins', 'num_scans', 'num_aggregations',
+            'start_table', 'join_tables', 'write_table'
+        ]
         
-        # Write to CSV
-        if flattened_results:
-            # index 0 -> select statement (no metadata), index 1 -> first write statement (with metadata)
-            fieldnames = flattened_results[1].keys()
-            
-            with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(flattened_results)
-            
-            logger.info(f"Results saved to {filename} ({len(flattened_results)} rows)")
+        # Determine which results to save
+        if append_mode and self._last_saved_index > 0:
+            results_to_save = self.results[self._last_saved_index:]
+            if not results_to_save:
+                logger.debug("No new results to append")
+                return
         else:
-            logger.warning("No flattened results to save")
-    
+            results_to_save = self.results
+            self._last_saved_index = 0
+        
+        # Write results to CSV
+        try:
+            mode = 'a' if append_mode and self._last_saved_index > 0 else 'w'
+            write_header = mode == 'w'
+            
+            with open(filename, mode, newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                
+                if write_header:
+                    writer.writeheader()
+                
+                for result in results_to_save:
+                    flat_result = self._flatten_single_result(result)
+                    writer.writerow(flat_result)
+            
+            # Update the last saved index
+            if append_mode:
+                self._last_saved_index = len(self.results)
+            
+            action = "appended" if mode == 'a' else "saved"
+            logger.info(f"Results {action} to {filename} ({len(results_to_save)} new rows, {len(self.results)} total)")
+            
+        except Exception as e:
+            logger.error(f"Error saving results to CSV: {e}", exc_info=True)
+
     def close_connection(self):
         """Close database connection"""
         self.cleanup_views()

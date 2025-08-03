@@ -223,8 +223,8 @@ def main():
                         # Save intermediate results every 5 experiments
                         if experiment_count % 5 == 0:
                             intermediate_file = f"{args.output}.tmp"
-                            benchmark.save_results_to_csv(intermediate_file)
-                            logger.info(f"Saved intermediate results to {intermediate_file}")
+                            benchmark.save_results_to_csv(intermediate_file, append_mode=True)
+                            logger.info(f"Appended intermediate results to {intermediate_file}")
                     else:
                         logger.warning(f"No valid write statements found for select_id {select_id}")
                 else:
