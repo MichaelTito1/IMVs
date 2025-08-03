@@ -231,7 +231,7 @@ def main():
                     logger.warning(f"Invalid select_id: {select_id}")
         
         # Save final results
-        benchmark.save_results_to_csv(args.output)
+        benchmark.save_results_to_csv(args.output, append_mode=(args.start_from_experiment > 0))
         logger.info(f"Benchmark completed. {experiment_count} experiments processed.")
         
         # Print summary statistics

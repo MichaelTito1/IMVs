@@ -5,6 +5,7 @@ import logging
 from typing import Any, Dict, List, Tuple
 import json
 import re
+import os
 
 from classes.baseball_db import BaseballDB
 from utils import remove_table_suffixes
@@ -281,7 +282,7 @@ class PostgreSQLBenchmark(BaseballDB):
             # Execute WRITE statements
             idx = 0
             for write_id, write_statement in write_ops:
-                logger.info(f"Executing write statement {idx + 1}/{len(write_ops)}")
+                logger.info(f"Executing write statement {idx + 1}/{len(write_ops)}. write_id: {write_id}")
                 idx += 1
 
                 write_result = self.execute_with_timing_and_plan(write_statement, "WRITE", fetch_results=False)
@@ -490,6 +491,7 @@ class PostgreSQLBenchmark(BaseballDB):
         Save all results to a CSV file efficiently.
         If append_mode is True, only save new results since last save.
         """
+        logger.info(f"Saving results to {filename} (append_mode={append_mode})")
         if not self.results:
             logger.warning("No results to save")
             return
@@ -515,12 +517,18 @@ class PostgreSQLBenchmark(BaseballDB):
                 return
         else:
             results_to_save = self.results
-            self._last_saved_index = 0
+            if not append_mode:
+                self._last_saved_index = 0
         
         # Write results to CSV
         try:
-            mode = 'a' if append_mode and self._last_saved_index > 0 else 'w'
+            # Fix: Use append_mode directly instead of checking _last_saved_index
+            mode = 'a' if append_mode else 'w'
             write_header = mode == 'w'
+            
+            # Check if file exists when appending to avoid writing header
+            if mode == 'a':
+                write_header = not os.path.exists(filename)
             
             with open(filename, mode, newline='', encoding='utf-8') as csvfile:
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
