@@ -4,3 +4,4 @@ pgdata/
 /scripts/*.csv
 data/norm_tables
 scripts/classes/__pycache__/
+data/*
