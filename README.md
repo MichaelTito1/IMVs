@@ -95,6 +95,8 @@ Now you can **run your INSERT** as usual and you'll get the execution plans of t
 # generating write workload:
 - from queryPotter, run `python workload_gen/setup.py`. This gives you a mix of read and write statements.
 
+- Extract the write_workload.csv from workload.csv `python3 /app/scripts/get_write_workload.py`
+
 - To obtain only the write statements, cleaned from table suffixes, run in the docker container `python3 /app/scripts/filter_write_statements.py --output /app/data/write_workload.sql --format sql`
 
 # Match read and write statements:
