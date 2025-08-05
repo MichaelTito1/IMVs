@@ -69,7 +69,7 @@ def calculate_mv_total_time(df):
                 'write_index': write_idx,
                 'write_time': write_time,
                 'refresh_time': refresh_time,
-                'total_time': total_time
+                'total_mv_time': total_time
             })
     
     return pd.DataFrame(mv_grouped)
@@ -127,7 +127,7 @@ def get_merged_data(df):
         return None
     
     # Calculate speedup (MV_time / IMMV_time)
-    merged['speedup'] = merged['total_time'] / merged['immv_time']
+    merged['speedup'] = merged['total_mv_time'] / merged['immv_time']
     return merged
 
 def compute_speedup_analysis(df):
@@ -142,7 +142,7 @@ def compute_speedup_analysis(df):
     # Calculate average speedup across all experiments for each write_index
     speedup_by_write_index = merged.groupby('write_index').agg({
         'speedup': ['mean', 'std', 'count'],
-        'total_time': 'mean',
+        'total_mv_time': 'mean',
         'immv_time': 'mean',
         'rows_affected': 'mean'
     }).round(3)
@@ -264,13 +264,13 @@ def create_enhanced_visualizations(merged_data, overall_stats):
     ax3 = fig.add_subplot(gs[2, :2])
     
     # Create scatter plot with better color mapping
-    scatter = ax3.scatter(merged_data['immv_time'], merged_data['total_time'], 
+    scatter = ax3.scatter(merged_data['immv_time'], merged_data['total_mv_time'], 
                          c=merged_data['speedup'], cmap='RdYlBu_r', 
                          s=60, alpha=0.6, edgecolors='black', linewidth=0.5)
     
     # Add trend line in log space for better fit
     log_immv = np.log10(merged_data['immv_time'])
-    log_mv = np.log10(merged_data['total_time'])
+    log_mv = np.log10(merged_data['total_mv_time'])
     z = np.polyfit(log_immv, log_mv, 1)
     
     # Create trend line in original space
@@ -280,8 +280,8 @@ def create_enhanced_visualizations(merged_data, overall_stats):
     ax3.plot(x_trend, y_trend, "r--", alpha=0.8, linewidth=2, label=f'Power Trend Line')
     
     # Equal performance line
-    min_time = min(merged_data['immv_time'].min(), merged_data['total_time'].min())
-    max_time = max(merged_data['immv_time'].max(), merged_data['total_time'].max())
+    min_time = min(merged_data['immv_time'].min(), merged_data['total_mv_time'].min())
+    max_time = max(merged_data['immv_time'].max(), merged_data['total_mv_time'].max())
     equal_line = np.logspace(np.log10(min_time), np.log10(max_time), 100)
     ax3.plot(equal_line, equal_line, 'k--', alpha=0.5, linewidth=2, label='Equal Performance')
     
@@ -317,7 +317,7 @@ def create_enhanced_visualizations(merged_data, overall_stats):
     
     complexity_stats = speedup_copy.groupby('complexity_category', observed=True).agg({
         'speedup': ['mean', 'std', 'count'],
-        'total_time': 'mean',
+        'total_mv_time': 'mean',
         'immv_time': 'mean'
     })
     
