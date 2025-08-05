@@ -89,11 +89,16 @@ def write_csv_output(write_statements, output_file):
         print("No write statements found.")
         return
     with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
-        fieldnames = write_statements[0].keys()
+        # Add write_idx as the first field, then the original fieldnames
+        original_fieldnames = list(write_statements[0].keys())
+        fieldnames = ['write_idx'] + original_fieldnames
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
-        for row in write_statements:
-            writer.writerow(row)
+        for idx, row in enumerate(write_statements):
+            # Create a new row with write_idx at the beginning
+            new_row = {'write_idx': idx}
+            new_row.update(row)
+            writer.writerow(new_row)
 
 def write_sql_output(write_statements, output_file):
     """Write only the SQL statements to a text file."""
