@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Tuple
 import json
 import re
 import os
+import psycopg2
 
 from classes.baseball_db import BaseballDB
 from utils import remove_table_suffixes
@@ -15,13 +16,14 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 logger = logging.getLogger(__name__)
 
 class PostgreSQLBenchmark(BaseballDB):
-    def __init__(self, host='localhost', port=5432, user='postgres', password='', db_name='baseball'):
+    def __init__(self, host='localhost', port=5432, user='postgres', password='', db_name='baseball', timeout=30):
         # Initialize parent class
         super().__init__(host=host, port=port, user=user, password=password, db_name=db_name)
         self.results = []
         self._metadata_cache = {}  # Cache for write statement metadata
         self._metadata_loaded = False
         self._last_saved_index = 0  # Track how many results we've already saved
+        self.timeout = timeout  # Timeout for query execution
         
     def connect(self):
         """Connect to PostgreSQL database and enable pg_ivm extension"""
@@ -69,7 +71,7 @@ class PostgreSQLBenchmark(BaseballDB):
     
     def execute_with_timing_and_plan(self, statement: str, statement_type: str = "SELECT", fetch_results: bool = True) -> Dict[str, Any]:
         """
-        Execute a statement and collect timing and execution plan.
+        Execute a statement and collect timing and execution plan with timeout support.
         """
         result = {
             'statement': statement,
@@ -82,6 +84,10 @@ class PostgreSQLBenchmark(BaseballDB):
         }
         
         try:
+            # Begin transaction with timeout
+            self.cursor.execute("BEGIN;")
+            self.cursor.execute(f"SET LOCAL statement_timeout = '{self.timeout}s';")
+            
             # Get execution plan for SELECT statements
             if statement_type == "SELECT":
                 plan_query = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {statement}"
@@ -121,10 +127,24 @@ class PostgreSQLBenchmark(BaseballDB):
                         result['rows_inserted'] = self._extract_rows_inserted_from_plan(result['plan'])
                     except Exception as e:
                         logger.debug(f"Could not extract rows_inserted from plan: {e}")
+            
+            # Commit transaction
+            self.cursor.execute("COMMIT;")
                 
+        except psycopg2.errors.QueryCanceled as e:
+            result['error'] = f"Query timeout after {self.timeout}s: {str(e)}"
+            logger.warning(f"Query timed out after {self.timeout}s: {statement[:100]}...")
+            try:
+                self.cursor.execute("ROLLBACK;")
+            except:
+                pass
         except Exception as e:
             result['error'] = str(e)
             logger.error(f"Error executing statement: {e}", exc_info=True)
+            try:
+                self.cursor.execute("ROLLBACK;")
+            except:
+                pass
             
         return result
 

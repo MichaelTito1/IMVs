@@ -114,6 +114,8 @@ def main():
                        help='Enable batch execution of write statements')  # New argument
     parser.add_argument('--run_both_modes', action='store_true',
                        help='Run both individual and batch modes for comparison')  # New argument
+    parser.add_argument('--timeout', type=int, default=30,
+                       help='SQL statement timeout in seconds (default: 30)')
     
     args = parser.parse_args()
     
@@ -124,6 +126,7 @@ def main():
         'db_name': os.getenv('PGDATABASE', 'baseball'),
         'user': os.getenv('PGUSER', 'myuser'),
         'password': os.getenv('PGPASSWORD', 'mypassword'),
+        'timeout': args.timeout,
     }
     
     # Initialize benchmark
