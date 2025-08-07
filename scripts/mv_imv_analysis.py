@@ -4,6 +4,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 import warnings
+from merge_benchmark_results import merge_benchmark_with_workload
+import os
+
 warnings.filterwarnings('ignore')
 
 # Constants
@@ -1019,6 +1022,466 @@ def create_cardinality_tradeoff_analysis(merged_data):
             
             print(f"  • RECOMMENDATION: {recommendation}")
 
+def load_merged_data(force_recreate: bool = False) -> pd.DataFrame:
+    """Load or create merged benchmark and workload data."""
+    merged_file = '/app/data/results/merged_benchmark_results.csv'
+    
+    if force_recreate or not os.path.exists(merged_file):
+        print("Creating merged benchmark results...")
+        merge_benchmark_with_workload(
+            '/app/data/results/merged_mv_immv_analysis.csv',
+            '/app/data/write_statements.csv', 
+            merged_file
+        )
+    
+    print(f"Loading merged data from: {merged_file}")
+    return pd.read_csv(merged_file)
+
+def analyze_write_performance(df: pd.DataFrame) -> None:
+    """Analyze write operation performance from merged data."""
+    print("\n=== WRITE PERFORMANCE ANALYSIS ===")
+    
+    # Filter to write operations only
+    writes = df[df['operation_type'] == 'write'].copy()
+    
+    if writes.empty:
+        print("No write operations found in the data")
+        return
+    
+    print(f"Analyzing {len(writes)} write operations")
+    
+    # Performance by query type
+    if 'query_type' in writes.columns:
+        print("\nPerformance by query type:")
+        perf_by_type = writes.groupby('query_type')['plan_execution_time'].agg(['count', 'mean', 'median', 'std'])
+        print(perf_by_type)
+        
+        # Plot performance by query type
+        plt.figure(figsize=(10, 6))
+        writes.boxplot(column='plan_execution_time', by='query_type', ax=plt.gca())
+        plt.title('Execution Time Distribution by Query Type')
+        plt.ylabel('Execution Time (seconds)')
+        plt.xlabel('Query Type')
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.savefig('/app/data/write_performance_by_type.png')
+        plt.close()
+    
+    # Rows affected vs execution time
+    if 'rows_affected' in writes.columns:
+        plt.figure(figsize=(10, 6))
+        plt.scatter(writes['rows_affected'], writes['plan_execution_time'], alpha=0.6)
+        plt.xlabel('Rows Affected')
+        plt.ylabel('Execution Time (seconds)')
+        plt.title('Execution Time vs Rows Affected')
+        plt.xscale('log')
+        plt.yscale('log')
+        plt.tight_layout()
+        plt.savefig('/app/data/results/execution_time_vs_rows_affected.png')
+        plt.close()
+
+def analyze_feature_correlations_with_execution_time(df: pd.DataFrame) -> None:
+    """Analyze correlations between features and plan_execution_time."""
+    print("\n=== FEATURE CORRELATION ANALYSIS WITH PLAN_EXECUTION_TIME ===")
+    
+    # Filter to rows with valid plan_execution_time
+    analysis_df = df[
+        (df['plan_execution_time'].notna()) & 
+        (df['plan_execution_time'] > 0)
+    ].copy()
+    
+    if analysis_df.empty:
+        print("No valid plan_execution_time data found")
+        return
+    
+    print(f"Analyzing {len(analysis_df)} records with valid plan_execution_time")
+    
+    # Feature engineering - create derived features
+    analysis_df['log_plan_execution_time'] = np.log10(analysis_df['plan_execution_time'] + 1e-6)
+    analysis_df['log_rows_affected'] = np.log10(analysis_df['rows_affected'].fillna(1))
+    # analysis_df['log_plan_total_cost'] = np.log10(analysis_df['plan_total_cost'].fillna(1))
+    
+    # Create complexity indicators
+    analysis_df['has_joins'] = (analysis_df['num_joins_benchmark'].fillna(0) > 0).astype(int)
+    analysis_df['has_aggregations'] = (analysis_df['num_aggregations_benchmark'].fillna(0) > 0).astype(int)
+    analysis_df['has_multiple_scans'] = (analysis_df['num_scans_benchmark'].fillna(0) > 1).astype(int)
+    analysis_df['query_complexity_score'] = (
+        analysis_df['num_joins_benchmark'].fillna(0) + 
+        analysis_df['num_scans_benchmark'].fillna(0) + 
+        analysis_df['num_aggregations_benchmark'].fillna(0)
+    )
+    
+    # Batch processing features
+    analysis_df['is_batch_mode'] = (analysis_df['batch_mode'] == True).astype(int)
+    analysis_df['log_batch_size'] = np.log10(analysis_df['batch_size'].fillna(1))
+    
+    # Configuration encoding
+    analysis_df['is_immv'] = (analysis_df['configuration'] == 'incremental_view').astype(int)
+    analysis_df['is_mv'] = (analysis_df['configuration'] == 'materialized_view').astype(int)
+    
+    # Query type encoding (if available)
+    if 'query_type' in analysis_df.columns:
+        query_type_dummies = pd.get_dummies(analysis_df['query_type'], prefix='query_type')
+        analysis_df = pd.concat([analysis_df, query_type_dummies], axis=1)
+    
+    # Select numerical features for correlation analysis
+    numerical_features = [
+        'rows_affected', 'rows_inserted', 'batch_size',
+        # 'plan_total_cost', 'plan_actual_time',
+        'num_joins_benchmark', 'num_scans_benchmark', 'num_aggregations_benchmark',
+        'log_rows_affected', 
+        # 'log_plan_total_cost',
+        'has_joins', 'has_aggregations', 'has_multiple_scans',
+        'query_complexity_score',
+        # 'is_batch_mode', 'log_batch_size',
+        'is_immv', 'is_mv'
+    ]
+    
+    # Add query type dummies if they exist
+    if 'query_type' in analysis_df.columns:
+        query_type_cols = [col for col in analysis_df.columns if col.startswith('query_type_')]
+        numerical_features.extend(query_type_cols)
+    
+    # Filter to existing columns
+    available_features = [f for f in numerical_features if f in analysis_df.columns]
+    
+    # Create correlation matrix
+    correlation_data = analysis_df[available_features + ['plan_execution_time', 'log_plan_execution_time']].fillna(0)
+    
+    # Calculate correlations with plan_execution_time
+    correlations = correlation_data.corr()['plan_execution_time'].abs().sort_values(ascending=False)
+    log_correlations = correlation_data.corr()['log_plan_execution_time'].abs().sort_values(ascending=False)
+    
+    print("\nTop correlations with plan_execution_time:")
+    print("-" * 50)
+    for feature, corr in correlations.head(15).items():
+        if feature != 'plan_execution_time':
+            print(f"{feature:<30} {corr:.4f}")
+    
+    print(f"\nTop correlations with log(plan_execution_time):")
+    print("-" * 50)
+    for feature, corr in log_correlations.head(15).items():
+        if feature != 'log_plan_execution_time':
+            print(f"{feature:<30} {corr:.4f}")
+    
+    # Create visualizations
+    create_correlation_visualizations(analysis_df, available_features, correlations, log_correlations)
+    
+    # Perform feature importance analysis using Random Forest
+    perform_feature_importance_analysis(analysis_df, available_features)
+    
+    # Analyze by configuration
+    analyze_correlations_by_configuration(analysis_df, available_features)
+
+def create_correlation_visualizations(df: pd.DataFrame, features: list, correlations: pd.Series, log_correlations: pd.Series) -> None:
+    """Create comprehensive correlation visualizations."""
+    
+    # Create figure with multiple subplots
+    fig = plt.figure(figsize=(20, 16))
+    gs = fig.add_gridspec(3, 3, height_ratios=[1, 1, 1], width_ratios=[1, 1, 1])
+    
+    fig.suptitle('Feature Correlation Analysis with Plan Execution Time', fontsize=20, fontweight='bold')
+    
+    # 1. Correlation heatmap
+    ax1 = fig.add_subplot(gs[0, :2])
+    
+    # Select top features for heatmap
+    top_features = correlations.head(20).index.tolist()
+    if 'plan_execution_time' in top_features:
+        top_features.remove('plan_execution_time')
+    
+    heatmap_data = df[top_features + ['plan_execution_time']].corr()
+    
+    sns.heatmap(heatmap_data, annot=True, cmap='RdBu_r', center=0, 
+                ax=ax1, fmt='.3f', cbar_kws={'label': 'Correlation Coefficient'})
+    ax1.set_title('Feature Correlation Heatmap (Top 20 Features)', fontweight='bold')
+    ax1.tick_params(axis='x', rotation=45)
+    ax1.tick_params(axis='y', rotation=0)
+    
+    # 2. Top correlations bar plot
+    ax2 = fig.add_subplot(gs[0, 2])
+    
+    top_corr_features = correlations.head(10)
+    if 'plan_execution_time' in top_corr_features.index:
+        top_corr_features = top_corr_features.drop('plan_execution_time')
+    else:
+        top_corr_features = top_corr_features.head(9)
+    
+    colors = ['green' if x > 0.3 else 'orange' if x > 0.1 else 'red' for x in top_corr_features.values]
+    bars = ax2.barh(range(len(top_corr_features)), top_corr_features.values, color=colors, alpha=0.7)
+    ax2.set_yticks(range(len(top_corr_features)))
+    ax2.set_yticklabels([f.replace('_', '\n') for f in top_corr_features.index], fontsize=8)
+    ax2.set_xlabel('Absolute Correlation')
+    ax2.set_title('Top Feature Correlations', fontweight='bold')
+    ax2.grid(True, alpha=0.3, axis='x')
+    
+    # Add value labels
+    for i, (bar, val) in enumerate(zip(bars, top_corr_features.values)):
+        ax2.text(val + 0.01, i, f'{val:.3f}', va='center', fontsize=8)
+    
+    # 3. Scatter plots for top correlated features
+    top_3_features = [f for f in correlations.head(4).index if f != 'plan_execution_time'][:3]
+    
+    for i, feature in enumerate(top_3_features):
+        ax = fig.add_subplot(gs[1, i])
+        
+        # Handle categorical vs numerical features
+        if feature.startswith('query_type_') or feature.startswith('is_') or feature.startswith('has_'):
+            # Box plot for categorical features
+            feature_values = df[feature].fillna(0)
+            groups = [df[feature_values == 0]['plan_execution_time'].dropna(),
+                     df[feature_values == 1]['plan_execution_time'].dropna()]
+            labels = ['No', 'Yes']
+            
+            ax.boxplot(groups, labels=labels, patch_artist=True)
+            ax.set_ylabel('Plan Execution Time')
+            ax.set_title(f'{feature.replace("_", " ").title()}', fontweight='bold')
+        else:
+            # Scatter plot for numerical features
+            x_data = df[feature].fillna(0)
+            y_data = df['plan_execution_time']
+            
+            valid_mask = (x_data.notna()) & (y_data.notna()) & (y_data > 0)
+            x_clean = x_data[valid_mask]
+            y_clean = y_data[valid_mask]
+            
+            if len(x_clean) > 0:
+                ax.scatter(x_clean, y_clean, alpha=0.6, s=30)
+                
+                # Add trend line
+                # if len(x_clean) > 5:
+                #     z = np.polyfit(x_clean, y_clean, 1)
+                #     x_trend = np.linspace(x_clean.min(), x_clean.max(), 100)
+                #     y_trend = z[0] * x_trend + z[1]
+                #     ax.plot(x_trend, y_trend, "r--", alpha=0.8, linewidth=2)
+                
+                ax.set_xlabel(feature.replace('_', ' ').title())
+                ax.set_ylabel('Plan Execution Time')
+                ax.set_title(f'{feature.replace("_", " ").title()}\nCorr: {correlations[feature]:.3f}', fontweight='bold')
+                
+                # Use log scale if values span several orders of magnitude
+                if y_clean.max() / y_clean.min() > 100:
+                    ax.set_yscale('log')
+                if len(x_clean.unique()) > 10 and x_clean.max() / x_clean.min() > 100:
+                    ax.set_xscale('log')
+        
+        ax.grid(True, alpha=0.3)
+    
+    # 4. Configuration comparison
+    ax4 = fig.add_subplot(gs[2, :])
+    
+    # Box plot comparing execution times by configuration
+    configs = df['configuration'].unique()
+    config_data = []
+    config_labels = []
+    
+    for config in configs:
+        config_subset = df[df['configuration'] == config]['plan_execution_time'].dropna()
+        if len(config_subset) > 0:
+            config_data.append(config_subset)
+            config_labels.append(f'{config}\n(n={len(config_subset)})')
+    
+    if config_data:
+        box_plot = ax4.boxplot(config_data, labels=config_labels, patch_artist=True)
+        
+        # Color boxes
+        colors = ['lightblue', 'lightgreen', 'lightcoral']
+        for patch, color in zip(box_plot['boxes'], colors[:len(box_plot['boxes'])]):
+            patch.set_facecolor(color)
+        
+        ax4.set_ylabel('Plan Execution Time')
+        ax4.set_title('Plan Execution Time Distribution by Configuration', fontweight='bold')
+        ax4.set_yscale('log')
+        ax4.grid(True, alpha=0.3, axis='y')
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    output_file = '/app/data/results/feature_correlation_analysis.png'
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    print(f"Correlation visualization saved as '{output_file}'")
+    
+    plt.show()
+
+def perform_feature_importance_analysis(df: pd.DataFrame, features: list) -> None:
+    """Perform feature importance analysis using Random Forest."""
+    try:
+        from sklearn.ensemble import RandomForestRegressor
+        from sklearn.model_selection import train_test_split
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.metrics import mean_squared_error, r2_score
+        
+        print("\n=== FEATURE IMPORTANCE ANALYSIS (Random Forest) ===")
+        
+        # Prepare data
+        feature_data = df[features].fillna(0)
+        target_data = df['plan_execution_time'].fillna(0)
+        
+        # Remove zero/invalid targets
+        valid_mask = target_data > 0
+        X = feature_data[valid_mask]
+        y = target_data[valid_mask]
+        
+        if len(X) < 10:
+            print("Insufficient data for feature importance analysis")
+            return
+        
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        
+        # Scale features
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+        
+        # Train Random Forest
+        rf = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=10)
+        rf.fit(X_train_scaled, y_train)
+        
+        # Predictions
+        y_pred = rf.predict(X_test_scaled)
+        
+        # Metrics
+        mse = mean_squared_error(y_test, y_pred)
+        r2 = r2_score(y_test, y_pred)
+        
+        print(f"Random Forest Performance:")
+        print(f"  R² Score: {r2:.4f}")
+        print(f"  Mean Squared Error: {mse:.4f}")
+        print(f"  Root Mean Squared Error: {np.sqrt(mse):.4f}")
+        
+        # Feature importance
+        feature_importance = pd.DataFrame({
+            'feature': features,
+            'importance': rf.feature_importances_
+        }).sort_values('importance', ascending=False)
+        
+        print(f"\nTop 15 Most Important Features:")
+        print("-" * 50)
+        for _, row in feature_importance.head(15).iterrows():
+            print(f"{row['feature']:<30} {row['importance']:.4f}")
+        
+        # Save feature importance plot
+        plt.figure(figsize=(12, 8))
+        top_features = feature_importance.head(15)
+        
+        colors = ['green' if x > 0.1 else 'orange' if x > 0.05 else 'red' for x in top_features['importance']]
+        bars = plt.barh(range(len(top_features)), top_features['importance'], color=colors, alpha=0.7)
+        
+        plt.yticks(range(len(top_features)), [f.replace('_', '\n') for f in top_features['feature']])
+        plt.xlabel('Feature Importance')
+        plt.title('Feature Importance for Plan Execution Time Prediction\n(Random Forest Regressor)', fontweight='bold')
+        plt.grid(True, alpha=0.3, axis='x')
+        
+        # Add value labels
+        for i, (bar, val) in enumerate(zip(bars, top_features['importance'])):
+            plt.text(val + 0.001, i, f'{val:.3f}', va='center', fontsize=9)
+        
+        plt.tight_layout()
+        plt.savefig('/app/data/results/feature_importance_analysis.png', dpi=300, bbox_inches='tight')
+        print(f"Feature importance plot saved as '/app/data/results/feature_importance_analysis.png'")
+        plt.show()
+        
+        # Save detailed results
+        feature_importance.to_csv('/app/data/results/feature_importance_results.csv', index=False)
+        print(f"Feature importance results saved to '/app/data/results/feature_importance_results.csv'")
+        
+    except ImportError:
+        print("scikit-learn not available. Skipping Random Forest analysis.")
+        print("Install with: pip install scikit-learn")
+
+def analyze_correlations_by_configuration(df: pd.DataFrame, features: list) -> None:
+    """Analyze feature correlations separately for each configuration."""
+    print("\n=== CORRELATION ANALYSIS BY CONFIGURATION ===")
+    
+    configurations = df['configuration'].unique()
+    
+    for config in configurations:
+        config_df = df[df['configuration'] == config].copy()
+        
+        if len(config_df) < 10:
+            print(f"\nSkipping {config}: insufficient data ({len(config_df)} records)")
+            continue
+        
+        print(f"\n{config.upper()} Configuration:")
+        print("-" * 40)
+        
+        # Calculate correlations for this configuration
+        correlation_data = config_df[features + ['plan_execution_time']].fillna(0)
+        correlations = correlation_data.corr()['plan_execution_time'].abs().sort_values(ascending=False)
+        
+        print("Top 10 correlations:")
+        for feature, corr in correlations.head(11).items():
+            if feature != 'plan_execution_time':
+                print(f"  {feature:<25} {corr:.4f}")
+    
+    # Create comparison visualization
+    create_configuration_comparison_plot(df, features, configurations)
+
+def create_configuration_comparison_plot(df: pd.DataFrame, features: list, configurations: list) -> None:
+    """Create visualization comparing feature correlations across configurations."""
+    
+    if len(configurations) < 2:
+        return
+    
+    # Calculate correlations for each configuration
+    config_correlations = {}
+    for config in configurations:
+        config_df = df[df['configuration'] == config]
+        if len(config_df) >= 10:
+            correlation_data = config_df[features + ['plan_execution_time']].fillna(0)
+            correlations = correlation_data.corr()['plan_execution_time'].abs()
+            config_correlations[config] = correlations
+    
+    if len(config_correlations) < 2:
+        return
+    
+    # Create comparison dataframe
+    comparison_df = pd.DataFrame(config_correlations)
+    comparison_df = comparison_df.drop('plan_execution_time', errors='ignore')
+    comparison_df = comparison_df.dropna()
+    
+    # Select top features that appear in all configurations
+    top_features = comparison_df.mean(axis=1).sort_values(ascending=False).head(15).index
+    
+    # Create plot
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+    fig.suptitle('Feature Correlation Comparison Across Configurations', fontsize=16, fontweight='bold')
+    
+    # Heatmap comparison
+    heatmap_data = comparison_df.loc[top_features]
+    sns.heatmap(heatmap_data, annot=True, cmap='RdYlBu_r', ax=ax1, 
+                fmt='.3f', cbar_kws={'label': 'Correlation Coefficient'})
+    ax1.set_title('Feature Correlations by Configuration', fontweight='bold')
+    ax1.set_ylabel('Features')
+    ax1.tick_params(axis='y', rotation=0)
+    
+    # Difference plot (if exactly 2 configurations)
+    if len(configurations) == 2:
+        config1, config2 = configurations[:2]
+        diff_data = comparison_df[config1] - comparison_df[config2]
+        diff_data = diff_data.loc[top_features].sort_values()
+        
+        colors = ['red' if x < -0.1 else 'green' if x > 0.1 else 'gray' for x in diff_data.values]
+        bars = ax2.barh(range(len(diff_data)), diff_data.values, color=colors, alpha=0.7)
+        
+        ax2.set_yticks(range(len(diff_data)))
+        ax2.set_yticklabels([f.replace('_', '\n') for f in diff_data.index], fontsize=8)
+        ax2.set_xlabel(f'Correlation Difference ({config1} - {config2})')
+        ax2.set_title('Configuration Correlation Differences', fontweight='bold')
+        ax2.axvline(x=0, color='black', linestyle='-', alpha=0.5)
+        ax2.grid(True, alpha=0.3, axis='x')
+        
+        # Add value labels
+        for i, (bar, val) in enumerate(zip(bars, diff_data.values)):
+            ax2.text(val + (0.01 if val >= 0 else -0.01), i, f'{val:.3f}', 
+                    va='center', ha='left' if val >= 0 else 'right', fontsize=8)
+    
+    plt.tight_layout()
+    plt.savefig('/app/data/results/configuration_correlation_comparison.png', dpi=300, bbox_inches='tight')
+    print(f"Configuration comparison plot saved as '/app/data/results/configuration_correlation_comparison.png'")
+    plt.show()
+
 def main():
     """Main function to run the enhanced analysis."""
     
@@ -1069,6 +1532,16 @@ def main():
     output_csv = '/app/data/results/enhanced_speedup_analysis_results.csv'
     speedup_by_write_index.to_csv(output_csv, index=False)
     print(f"\nDetailed results saved to '{output_csv}'")
+    
+    # Load merged data
+    merged_df = load_merged_data()
+
+    # Perform feature correlation analysis
+    print("\nPerforming feature correlation analysis...")
+    analyze_feature_correlations_with_execution_time(merged_df)
+    
+    # Run write performance analysis
+    analyze_write_performance(merged_df)
     
     print("\nEnhanced analysis complete!")
 
