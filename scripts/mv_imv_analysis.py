@@ -13,6 +13,40 @@ warnings.filterwarnings('ignore')
 IMMV_SPEEDUP_THRESHOLD = 1.05  # IMMV is better if speedup > 1.05
 MV_SPEEDUP_THRESHOLD = 0.95  # MV is better if speedup < 0.95
 IMMV_OUTLIER_THRESHOLD = 5  # IMMV is considered an outlier if speedup > 5
+MIN_EXECUTION_TIME_MS = 100  # Minimum execution time in milliseconds
+MAX_EXECUTION_TIME_MS = 30000  # Maximum execution time in milliseconds (30 seconds)
+
+def filter_by_execution_time(df):
+    """Filter dataframe to exclude statements with execution time < 100ms or > 30s."""
+    print(f"Before execution time filtering: {len(df)} records")
+    
+    # Filter based on plan_execution_time (which is in seconds, convert to milliseconds)
+    initial_count = len(df)
+    
+    # Convert seconds to milliseconds for comparison
+    df_filtered = df[
+        (df['plan_execution_time'].notna()) &
+        (df['plan_execution_time'] * 1000 >= MIN_EXECUTION_TIME_MS) &
+        (df['plan_execution_time'] * 1000 <= MAX_EXECUTION_TIME_MS)
+    ].copy()
+    
+    filtered_count = len(df_filtered)
+    excluded_count = initial_count - filtered_count
+    
+    print(f"After execution time filtering: {filtered_count} records")
+    print(f"Excluded {excluded_count} records ({excluded_count/initial_count*100:.1f}%) outside {MIN_EXECUTION_TIME_MS/1000:.1f}s - {MAX_EXECUTION_TIME_MS/1000:.0f}s range")
+    
+    if excluded_count > 0:
+        # Show statistics of excluded records
+        excluded_df = df[~df.index.isin(df_filtered.index)]
+        if len(excluded_df) > 0:
+            too_fast = excluded_df[excluded_df['plan_execution_time'] * 1000 < MIN_EXECUTION_TIME_MS]
+            too_slow = excluded_df[excluded_df['plan_execution_time'] * 1000 > MAX_EXECUTION_TIME_MS]
+            
+            print(f"  - Excluded {len(too_fast)} records with execution time < {MIN_EXECUTION_TIME_MS/1000:.1f}s")
+            print(f"  - Excluded {len(too_slow)} records with execution time > {MAX_EXECUTION_TIME_MS/1000:.0f}s")
+    
+    return df_filtered
 
 def load_and_clean_data(csv_file):
     """Load and clean the benchmark results CSV file."""
@@ -31,6 +65,9 @@ def load_and_clean_data(csv_file):
         print(f"Loaded {len(df)} records from {csv_file}")
         print(f"Configurations: {df['configuration'].unique()}")
         print(f"Operation types: {df['operation_type'].unique()}")
+        
+        # Apply execution time filtering
+        df = filter_by_execution_time(df)
         
         return df
         
@@ -140,6 +177,28 @@ def compute_speedup_analysis(df):
     if merged is None:
         return None, None, None
     
+    # Apply execution time filtering to merged data as well
+    print("\nApplying execution time filtering to merged analysis data...")
+    initial_merged_count = len(merged)
+    
+    # Filter based on both IMMV and MV execution times
+    merged_filtered = merged[
+        (merged['immv_time'] * 1000 >= MIN_EXECUTION_TIME_MS) &
+        (merged['immv_time'] * 1000 <= MAX_EXECUTION_TIME_MS) &
+        (merged['total_mv_time'] * 1000 >= MIN_EXECUTION_TIME_MS) &
+        (merged['total_mv_time'] * 1000 <= MAX_EXECUTION_TIME_MS)
+    ].copy()
+    
+    filtered_merged_count = len(merged_filtered)
+    print(f"Merged analysis: {initial_merged_count} -> {filtered_merged_count} records after time filtering")
+    print(f"Excluded {initial_merged_count - filtered_merged_count} comparisons outside time range")
+    
+    merged = merged_filtered
+    
+    if len(merged) == 0:
+        print("Warning: No records remain after execution time filtering")
+        return None, None, None
+
     merged.to_csv('/app/data/results/merged_mv_immv_analysis.csv', index=False)
 
     # Calculate average speedup across all experiments for each write_index
@@ -1041,14 +1100,17 @@ def analyze_write_performance(df: pd.DataFrame) -> None:
     """Analyze write operation performance from merged data."""
     print("\n=== WRITE PERFORMANCE ANALYSIS ===")
     
+    # Apply execution time filtering
+    df_filtered = filter_by_execution_time(df)
+    
     # Filter to write operations only
-    writes = df[df['operation_type'] == 'write'].copy()
+    writes = df_filtered[df_filtered['operation_type'] == 'write'].copy()
     
     if writes.empty:
-        print("No write operations found in the data")
+        print("No write operations found in the data after filtering")
         return
     
-    print(f"Analyzing {len(writes)} write operations")
+    print(f"Analyzing {len(writes)} write operations (after execution time filtering)")
     
     # Performance by query type
     if 'query_type' in writes.columns:
@@ -1084,17 +1146,20 @@ def analyze_feature_correlations_with_execution_time(df: pd.DataFrame) -> None:
     """Analyze correlations between features and plan_execution_time."""
     print("\n=== FEATURE CORRELATION ANALYSIS WITH PLAN_EXECUTION_TIME ===")
     
+    # Apply execution time filtering
+    df_filtered = filter_by_execution_time(df)
+    
     # Filter to rows with valid plan_execution_time
-    analysis_df = df[
-        (df['plan_execution_time'].notna()) & 
-        (df['plan_execution_time'] > 0)
+    analysis_df = df_filtered[
+        (df_filtered['plan_execution_time'].notna()) & 
+        (df_filtered['plan_execution_time'] > 0)
     ].copy()
     
     if analysis_df.empty:
-        print("No valid plan_execution_time data found")
+        print("No valid plan_execution_time data found after filtering")
         return
     
-    print(f"Analyzing {len(analysis_df)} records with valid plan_execution_time")
+    print(f"Analyzing {len(analysis_df)} records with valid plan_execution_time (after time filtering)")
     
     # Feature engineering - create derived features
     analysis_df['log_plan_execution_time'] = np.log10(analysis_df['plan_execution_time'] + 1e-6)
@@ -1450,7 +1515,7 @@ def create_configuration_comparison_plot(df: pd.DataFrame, features: list, confi
     
     # Heatmap comparison
     heatmap_data = comparison_df.loc[top_features]
-    sns.heatmap(heatmap_data, annot=True, cmap='RdYlBu_r', ax=ax1, 
+    sns.heatmap(heatmap_data, annot=True, cmap='RdBu_r', ax=ax1, 
                 fmt='.3f', cbar_kws={'label': 'Correlation Coefficient'})
     ax1.set_title('Feature Correlations by Configuration', fontweight='bold')
     ax1.set_ylabel('Features')
