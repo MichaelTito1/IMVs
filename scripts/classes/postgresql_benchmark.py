@@ -127,7 +127,14 @@ class PostgreSQLBenchmark(BaseballDB):
                         result['rows_inserted'] = self._extract_rows_inserted_from_plan(result['plan'])
                     except Exception as e:
                         logger.debug(f"Could not extract rows_inserted from plan: {e}")
-            
+
+            self.cursor.execute(f"SELECT * from pg_stat_database WHERE datname LIKE '%{self.db_name}%'")
+            db_stats = self.cursor.fetchone()
+            if db_stats:
+                columns = [desc[0] for desc in self.cursor.description]
+                logger.info(f"Database statistics for {self.db_name}: {columns}")
+                for key, value in zip(columns, db_stats):
+                    result[f"db_stat_{key}"] = value
             # Commit transaction
             self.cursor.execute("COMMIT;")
                 
@@ -503,7 +510,11 @@ class PostgreSQLBenchmark(BaseballDB):
                 flat_result['triggers'] = json.dumps(result.get('triggers', []), ensure_ascii=False)
             except Exception as e:
                 logger.warning(f"Error processing triggers data: {e}")
-        
+
+        for key, value in result.items():
+            if 'db_stat_' in key:
+                flat_result[key] = value
+
         return flat_result
 
     def save_results_to_csv(self, filename: str = "benchmark_results.csv", append_mode: bool = False):
@@ -528,7 +539,15 @@ class PostgreSQLBenchmark(BaseballDB):
             'query_type', 'num_joins', 'num_scans', 'num_aggregations',
             'start_table', 'join_tables', 'write_table'
         ]
-        
+
+        try:
+            fieldnames = set(fieldnames)
+            fieldnames.update(self.results[0].keys())  # Use keys from the first result
+            fieldnames.update(self.results[1].keys())
+            fieldnames = list(fieldnames)
+        except Exception as e:
+            logger.error(f"Error determining fieldnames from results: {e}")
+
         # Determine which results to save
         if append_mode and self._last_saved_index > 0:
             results_to_save = self.results[self._last_saved_index:]
