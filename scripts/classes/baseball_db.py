@@ -124,6 +124,22 @@ class BaseballDB:
             logger.error(f"Error getting table names: {e}")
             return []
 
+    def create_staging_tables(self):
+        """Create staging tables for CSV imports"""
+        try:
+            table_names = self.get_table_names()
+            for table_name in table_names:
+                self.cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS public.staging_{table_name} (LIKE public.{table_name} INCLUDING ALL)
+                """)
+            self.conn.commit()
+            logger.info("Staging tables created successfully")
+            return True
+        except psycopg2.Error as e:
+            logger.error(f"Error creating staging table: {e}")
+            self.conn.rollback()
+            return False
+
     def import_csv_to_table(self, csv_path, table_name: str):
         """Import CSV data into specified table"""
         if not os.path.exists(csv_path):
@@ -226,7 +242,8 @@ class BaseballDB:
         
         # Get database tables
         tables = self.get_table_names()
-        
+        staging_tables = [table for table in tables if 'staging' in table]
+
         imported_count = 0
         
         for csv_file in csv_files:
@@ -235,9 +252,9 @@ class BaseballDB:
             
             # Find matching table
             matching_table = None
-            for table in tables:
-                if table.lower() == filename or table.lower().replace('_', '') == filename.replace('_', ''):
-                    matching_table = table
+            for staging_table in staging_tables:
+                if f"staging_{filename}" in staging_table.lower() or staging_table.lower().replace('_', '') == filename.replace('_', ''):
+                    matching_table = staging_table
                     break
             
             if matching_table:

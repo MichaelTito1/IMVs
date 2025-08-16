@@ -48,9 +48,14 @@ def main():
         logger.info("Step 4: Creating tables from schema file...")
         if not db_setup.execute_schema_file(schema_file):
             sys.exit(1)
-        
-        # Step 5: Import CSV data
-        logger.info("Step 5: Importing CSV data...")
+
+        # Step 5: Create staging tables
+        logger.info("Step 5: Creating staging tables...")
+        if not db_setup.create_staging_tables():
+            sys.exit(1)
+
+        # Step 6: Import CSV data
+        logger.info("Step 6: Importing CSV data...")
         if not db_setup.import_all_csvs(csv_directory):
             sys.exit(1)
         
