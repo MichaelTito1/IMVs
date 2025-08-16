@@ -15,5 +15,11 @@ RUN git clone https://github.com/sraoss/pg_ivm.git /pg_ivm \
  && make && make install \
  && cd / && rm -rf /pg_ivm
 
+# build and install mv_stats
+RUN git clone https://github.com/asotolongo/mv_stats.git /mv_stats \
+ && cd /mv_stats \
+ && make install \
+ && cd / && rm -rf /mv_stats
+
 # Expose port and use default postgres startup
 EXPOSE 5432
