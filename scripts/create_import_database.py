@@ -55,7 +55,7 @@ def main():
             sys.exit(1)
 
         # Step 6: Import CSV data
-        logger.info("Step 6: Importing CSV data...")
+        logger.info("Step 6: Importing CSV data into staging tables...")
         if not db_setup.import_all_csvs(csv_directory):
             sys.exit(1)
         

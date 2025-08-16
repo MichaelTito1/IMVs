@@ -9,7 +9,7 @@ import os
 import psycopg2
 
 from classes.baseball_db import BaseballDB
-from utils import remove_table_suffixes
+from utils import remove_table_suffixes, add_staging_prefix
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -57,7 +57,7 @@ class PostgreSQLBenchmark(BaseballDB):
             for idx, statement in enumerate(select_statements[:10]):  # Limit to first 10 for warmup
                 try:
                     start_time = time.time()
-                    self.cursor.execute(statement)
+                    self.cursor.execute(add_staging_prefix(statement))
                     self.cursor.fetchall()  # Ensure all results are fetched
                     execution_time = (time.time() - start_time) * 1000
                     
@@ -73,6 +73,7 @@ class PostgreSQLBenchmark(BaseballDB):
         """
         Execute a statement and collect timing and execution plan with timeout support.
         """
+        statement = add_staging_prefix(statement)
         result = {
             'statement': statement,
             'statement_type': statement_type,
@@ -132,7 +133,6 @@ class PostgreSQLBenchmark(BaseballDB):
             db_stats = self.cursor.fetchone()
             if db_stats:
                 columns = [desc[0] for desc in self.cursor.description]
-                logger.info(f"Database statistics for {self.db_name}: {columns}")
                 for key, value in zip(columns, db_stats):
                     result[f"db_stat_{key}"] = value
             # Commit transaction
