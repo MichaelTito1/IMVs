@@ -530,24 +530,30 @@ class PostgreSQLBenchmark(BaseballDB):
         # Ensure metadata cache is loaded
         self._load_write_metadata_cache()
         
-        # Define fieldnames once
+        # Define fieldnames in the desired order
         fieldnames = [
             'experiment_id', 'configuration', 'operation_type', 'write_index',
             'execution_time', 'plan_execution_time', 'rows_affected', 'rows_inserted',
             'batch_mode', 'batch_size', 'error', 'statement',
             'plan_total_cost', 'plan_actual_time', 'plan_node_type', 'plan', 'triggers',
             'query_type', 'num_joins', 'num_scans', 'num_aggregations',
-            'start_table', 'join_tables', 'write_table'
+            'start_table', 'join_tables', 'write_table', 'statement_type'
         ]
-
-        try:
-            fieldnames = set(fieldnames)
-            fieldnames.update(self.results[0].keys())  # Use keys from the first result
-            fieldnames.update(self.results[1].keys())
-            fieldnames = list(fieldnames)
-        except Exception as e:
-            logger.error(f"Error determining fieldnames from results: {e}")
-
+        
+        # Add database statistics fields in a consistent order
+        db_stat_fields = [
+            'db_stat_datid', 'db_stat_datname', 'db_stat_numbackends', 'db_stat_xact_commit',
+            'db_stat_xact_rollback', 'db_stat_blks_read', 'db_stat_blks_hit', 'db_stat_tup_returned',
+            'db_stat_tup_fetched', 'db_stat_tup_inserted', 'db_stat_tup_updated', 'db_stat_tup_deleted',
+            'db_stat_conflicts', 'db_stat_temp_files', 'db_stat_temp_bytes', 'db_stat_deadlocks',
+            'db_stat_checksum_failures', 'db_stat_checksum_last_failure', 'db_stat_blk_read_time',
+            'db_stat_blk_write_time', 'db_stat_sessions', 'db_stat_sessions_abandoned', 
+            'db_stat_sessions_fatal', 'db_stat_sessions_killed', 'db_stat_session_time',
+            'db_stat_active_time', 'db_stat_idle_in_transaction_time', 'db_stat_stats_reset'
+        ]
+        
+        fieldnames.extend(db_stat_fields)
+        
         # Determine which results to save
         if append_mode and self._last_saved_index > 0:
             results_to_save = self.results[self._last_saved_index:]
