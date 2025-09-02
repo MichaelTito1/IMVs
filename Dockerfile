@@ -7,6 +7,7 @@ RUN apt-get update \
       ca-certificates python3 python3-pip \
       python3-psycopg2 python3-pandas python3-numpy \
       python3-matplotlib python3-seaborn \
+     python3-openpyxl python3-tqdm python3-ijson python3-psutil \
  && rm -rf /var/lib/apt/lists/*
 
 # Build and install pg_ivm
