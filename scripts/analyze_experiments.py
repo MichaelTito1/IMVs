@@ -137,6 +137,7 @@ class ExperimentAnalyzer:
     def extract_execution_times_streaming(self) -> pd.DataFrame:
         """
         Extract execution times using streaming approach for memory efficiency.
+        Filters out queries with zero_card=True or short_runtime=True.
         
         Returns:
             DataFrame with execution times, processed in chunks
@@ -147,6 +148,7 @@ class ExperimentAnalyzer:
         total_files = sum(len(setups) for setups in experiments.values())
         
         all_records = []
+        filtered_counts = {'zero_card': 0, 'short_runtime': 0, 'timeout': 0, 'total_processed': 0}
         
         with tqdm(total=total_files, desc="Processing experiment files") as pbar:
             for exp_id, setups in experiments.items():
@@ -164,6 +166,25 @@ class ExperimentAnalyzer:
                     stmt_idx = 0
                     
                     for query_data in self.stream_parse_queries(file_path):
+                        filtered_counts['total_processed'] += 1
+                        
+                        # Check if query should be filtered out
+                        zero_card = bool(query_data.get('zero_card', False))
+                        short_runtime = bool(query_data.get('short_runtime', False))
+                        timeout = bool(query_data.get('timeout', False))
+                        
+                        if zero_card:
+                            filtered_counts['zero_card'] += 1
+                            continue
+                        
+                        if short_runtime:
+                            filtered_counts['short_runtime'] += 1
+                            continue
+                        
+                        if timeout:
+                            filtered_counts['timeout'] += 1
+                            continue
+                        
                         # Extract timing data
                         record = self.extract_single_query_timing(
                             query_data, exp_id, setup_type, stmt_idx)
@@ -188,7 +209,17 @@ class ExperimentAnalyzer:
                     all_records.extend(chunk_records)
                     pbar.update(1)
         
-        logger.info(f"Extracted {len(all_records)} total records")
+        # Log filtering statistics
+        logger.info(f"Filtering summary:")
+        logger.info(f"  Total queries processed: {filtered_counts['total_processed']:,}")
+        logger.info(f"  Filtered out (zero_card): {filtered_counts['zero_card']:,}")
+        logger.info(f"  Filtered out (short_runtime): {filtered_counts['short_runtime']:,}")
+        logger.info(f"  Filtered out (timeout): {filtered_counts['timeout']:,}")
+        logger.info(f"  Remaining for analysis: {len(all_records):,}")
+        
+        # Store filtering stats for later use
+        self.filtering_stats = filtered_counts
+        
         return pd.DataFrame(all_records)
     
     def extract_single_query_timing(self, query_data: Dict, exp_id: str, 
