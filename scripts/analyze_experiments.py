@@ -213,23 +213,24 @@ class ExperimentAnalyzer:
                 
             plan = analyze_plans[0].get('Plan', {})
             
-            execution_time = plan.get('Actual Total Time', 0)
-            planning_time = analyze_plans[0].get('Planning Time', 0)
-            total_cost = plan.get('Total Cost', 0)
-            startup_cost = plan.get('Startup Cost', 0)
+            # Convert all numeric values to float to avoid Decimal/float mixing
+            execution_time = float(plan.get('Actual Total Time', 0))
+            planning_time = float(analyze_plans[0].get('Planning Time', 0))
+            total_cost = float(plan.get('Total Cost', 0))
+            startup_cost = float(plan.get('Startup Cost', 0))
             
             # Check flags
-            timeout = query_data.get('timeout', False)
-            zero_card = query_data.get('zero_card', False)
-            short_runtime = query_data.get('short_runtime', False)
+            timeout = bool(query_data.get('timeout', False))
+            zero_card = bool(query_data.get('zero_card', False))
+            short_runtime = bool(query_data.get('short_runtime', False))
             
             # Get SQL snippet for identification (truncated to save memory)
             sql_snippet = query_data.get('sql', '')[:100] + '...' if len(query_data.get('sql', '')) > 100 else query_data.get('sql', '')
             
             return {
-                'experiment_id': exp_id,
-                'setup_type': setup_type,
-                'statement_idx': stmt_idx,
+                'experiment_id': str(exp_id),
+                'setup_type': str(setup_type),
+                'statement_idx': int(stmt_idx),
                 'execution_time': execution_time,
                 'planning_time': planning_time,
                 'total_cost': total_cost,
@@ -367,7 +368,18 @@ class ExperimentAnalyzer:
     
     def calculate_statistics_optimized(self, df_times: pd.DataFrame, 
                                      df_speedups: pd.DataFrame) -> Dict:
-        """Calculate statistics with memory optimization."""
+        """Calculate statistics with memory optimization and proper type handling."""
+        
+        # Ensure numeric columns are properly typed
+        numeric_columns = ['execution_time', 'planning_time', 'total_cost', 'startup_cost']
+        for col in numeric_columns:
+            if col in df_times.columns:
+                df_times[col] = pd.to_numeric(df_times[col], errors='coerce')
+        
+        if not df_speedups.empty:
+            df_speedups['speedup'] = pd.to_numeric(df_speedups['speedup'], errors='coerce')
+            df_speedups['baseline_time'] = pd.to_numeric(df_speedups['baseline_time'], errors='coerce')
+            df_speedups['comparison_time'] = pd.to_numeric(df_speedups['comparison_time'], errors='coerce')
         
         # Basic statistics using pandas built-in optimizations
         stats = {
@@ -380,7 +392,7 @@ class ExperimentAnalyzer:
         time_stats = df_times.groupby('setup_type')['execution_time'].agg(['mean', 'median', 'std', 'count'])
         stats['avg_execution_times'] = time_stats['mean'].to_dict()
         stats['median_execution_times'] = time_stats['median'].to_dict()
-        stats['std_execution_times'] = time_stats['std'].to_dict()
+        stats['std_execution_times'] = time_stats['std'].fillna(0).to_dict()  # Fill NaN with 0
         stats['count_by_setup'] = time_stats['count'].to_dict()
         
         # Speedup analysis
@@ -388,21 +400,41 @@ class ExperimentAnalyzer:
             speedup_stats = {}
             for comparison in df_speedups['comparison'].unique():
                 subset = df_speedups[df_speedups['comparison'] == comparison]
-                # Filter out infinite speedups for statistics
-                finite_mask = (subset['speedup'] != float('inf')) & (subset['speedup'] != -float('inf'))
+                
+                # Filter out infinite and NaN speedups for statistics
+                finite_mask = (
+                    subset['speedup'].notna() &
+                    (subset['speedup'] != float('inf')) & 
+                    (subset['speedup'] != -float('inf')) &
+                    (subset['speedup'] > 0)
+                )
                 finite_speedups = subset.loc[finite_mask, 'speedup']
                 
-                speedup_stats[comparison] = {
-                    'mean_speedup': finite_speedups.mean(),
-                    'median_speedup': finite_speedups.median(),
-                    'min_speedup': finite_speedups.min(),
-                    'max_speedup': finite_speedups.max(),
-                    'std_speedup': finite_speedups.std(),
-                    'count': len(finite_speedups),
-                    'infinite_speedups': len(subset) - len(finite_speedups),
-                    'percentile_95': finite_speedups.quantile(0.95),
-                    'percentile_05': finite_speedups.quantile(0.05),
-                }
+                if len(finite_speedups) > 0:
+                    speedup_stats[comparison] = {
+                        'mean_speedup': finite_speedups.mean(),
+                        'median_speedup': finite_speedups.median(),
+                        'min_speedup': finite_speedups.min(),
+                        'max_speedup': finite_speedups.max(),
+                        'std_speedup': finite_speedups.std() if len(finite_speedups) > 1 else 0.0,
+                        'count': len(finite_speedups),
+                        'infinite_speedups': len(subset) - len(finite_speedups),
+                        'percentile_95': finite_speedups.quantile(0.95) if len(finite_speedups) > 0 else 0.0,
+                        'percentile_05': finite_speedups.quantile(0.05) if len(finite_speedups) > 0 else 0.0,
+                    }
+                else:
+                    # Handle case where no finite speedups exist
+                    speedup_stats[comparison] = {
+                        'mean_speedup': 0.0,
+                        'median_speedup': 0.0,
+                        'min_speedup': 0.0,
+                        'max_speedup': 0.0,
+                        'std_speedup': 0.0,
+                        'count': 0,
+                        'infinite_speedups': len(subset),
+                        'percentile_95': 0.0,
+                        'percentile_05': 0.0,
+                    }
             
             stats['speedup_analysis'] = speedup_stats
         
