@@ -2,6 +2,7 @@ import re
 import argparse
 import csv
 import gc
+import os
 import time
 from typing import Set, List, Dict, Iterator, Tuple
 from collections import defaultdict, Counter
@@ -198,6 +199,10 @@ def process_with_limits(select_file: str, write_file: str,
     print(f"  Max matches per SELECT: {max_matches_per_select}")
     print(f"  Max total matches: {max_total_matches}")
     
+    # Create output directory for experiment SQL files
+    experiment_dir = '/app/data/experiments'
+    os.makedirs(experiment_dir, exist_ok=True)
+    
     # Open output file with explicit encoding and proper CSV settings
     output_file = '/app/data/matches.csv'
     with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
@@ -222,6 +227,7 @@ def process_with_limits(select_file: str, write_file: str,
                 matches_for_this_select = 0
                 batch_matches = []
                 processed_pairs = set()
+                experiment_write_statements = []  # Store matched write statements for SQL file
                 
                 # Find matching write statements with limits
                 for table in select_tables:
@@ -249,6 +255,9 @@ def process_with_limits(select_file: str, write_file: str,
                             common_tables = select_tables & write_tables
                             
                             if common_tables:
+                                # Store write statement for SQL file generation
+                                experiment_write_statements.append(write_stmt)
+                                
                                 # Ensure all values are properly formatted and not None
                                 truncated_select = select_stmt[:500] + '...' if len(select_stmt) > 500 else select_stmt
                                 truncated_write = write_stmt[:500] + '...' if len(write_stmt) > 500 else write_stmt
@@ -266,6 +275,26 @@ def process_with_limits(select_file: str, write_file: str,
                                 batch_matches.append(match)
                                 processed_pairs.add(pair_key)
                                 matches_for_this_select += 1
+                
+                # Create SQL experiment file if there are matches
+                if experiment_write_statements:
+                    experiment_sql_file = os.path.join(experiment_dir, f'experiment_{select_idx}.sql')
+                    try:
+                        with open(experiment_sql_file, 'w', encoding='utf-8') as sql_file:
+                            # Write the SELECT statement
+                            sql_file.write(select_stmt)
+                            if not select_stmt.endswith(';'):
+                                sql_file.write(';')
+                            sql_file.write('\n')
+                            # Write all matched WRITE statements
+                            for i, write_stmt in enumerate(experiment_write_statements, 1):
+                                sql_file.write(write_stmt)
+                                if not write_stmt.endswith(';'):
+                                    sql_file.write(';')
+                                sql_file.write('\n')
+                                
+                    except Exception as e:
+                        print(f"Warning: Failed to create SQL file for experiment {select_idx}: {e}")
                 
                 # Write matches for this SELECT one by one to ensure data integrity
                 if batch_matches:
