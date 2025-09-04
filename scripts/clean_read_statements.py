@@ -3,8 +3,8 @@
 SQL Statement Cleaner
 
 This script reads SQL statements from a file (one per line, ending with semicolon),
-removes unsupported clauses like ORDER BY, and rewrites the cleaned statements
-back to the file in place.
+removes unsupported clauses like ORDER BY, and writes the cleaned statements
+to a separate output file.
 """
 
 import re
@@ -58,20 +58,31 @@ def remove_unsupported_clauses(sql: str) -> str:
     return sql
 
 
-def clean_sql_file(filename: str, backup: bool = True, dry_run: bool = False):
+def clean_sql_file(filename: str, output_filename: str = None, dry_run: bool = False):
     """
     Clean SQL statements in a file by removing unsupported clauses.
     
     Args:
-        filename: Path to the SQL file
-        backup: Whether to create a backup file before modifying
-        dry_run: If True, show what would be changed without modifying the file
+        filename: Path to the input SQL file
+        output_filename: Path to the output SQL file (if None, generates from input filename)
+        dry_run: If True, show what would be changed without modifying any file
     """
     file_path = Path(filename)
     
     if not file_path.exists():
         print(f"Error: File '{filename}' does not exist.")
         return False
+    
+    # Generate output filename if not provided
+    if output_filename is None:
+        output_filename = file_path.stem + '_cleaned' + file_path.suffix
+        output_path = file_path.parent / output_filename
+    else:
+        output_path = Path(output_filename)
+        # If output path is a directory, generate filename within that directory
+        if output_path.is_dir():
+            output_filename = file_path.stem + '_cleaned' + file_path.suffix
+            output_path = output_path / output_filename
     
     try:
         # Read all lines from the file
@@ -109,25 +120,17 @@ def clean_sql_file(filename: str, backup: bool = True, dry_run: bool = False):
                 cleaned_lines.append(cleaned_line)
         
         if dry_run:
-            print(f"DRY RUN: Would modify {changes_made} statement(s) in '{filename}'")
+            print(f"DRY RUN: Would create '{output_path}' with {changes_made} statement(s) modified from '{filename}'")
             return True
         
         if changes_made == 0:
-            print(f"No changes needed in '{filename}'")
-            return True
+            print(f"No changes needed, but copying '{filename}' to '{output_path}'")
         
-        # Create backup if requested
-        if backup:
-            backup_path = file_path.with_suffix(file_path.suffix + '.backup')
-            with open(backup_path, 'w', encoding='utf-8') as f:
-                f.writelines(lines)
-            print(f"Backup created: {backup_path}")
-        
-        # Write cleaned content back to file
-        with open(file_path, 'w', encoding='utf-8') as f:
+        # Write cleaned content to output file
+        with open(output_path, 'w', encoding='utf-8') as f:
             f.writelines(cleaned_lines)
         
-        print(f"Successfully cleaned {changes_made} statement(s) in '{filename}'")
+        print(f"Successfully created '{output_path}' with {changes_made} statement(s) cleaned from '{filename}'")
         return True
         
     except Exception as e:
@@ -141,9 +144,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
             Examples:
-                python sql_cleaner.py queries.sql
-                python sql_cleaner.py queries.sql --no-backup
-                python sql_cleaner.py queries.sql --dry-run
+                python clean_read_statements.py --filename queries.sql
+                python clean_read_statements.py --filename queries.sql --output cleaned_queries.sql
+                python clean_read_statements.py --filename queries.sql --output /app/output_dir/
+                python clean_read_statements.py --filename queries.sql --dry-run
         """
     )
     
@@ -155,22 +159,22 @@ def main():
     )
     
     parser.add_argument(
-        '--no-backup',
-        action='store_true',
-        help='Do not create a backup file before modifying'
+        '--output',
+        type=str,
+        help='Output file or directory for cleaned SQL statements (if directory provided, will use input_filename_cleaned.sql within that directory)'
     )
     
     parser.add_argument(
         '--dry-run',
         action='store_true',
-        help='Show what would be changed without modifying the file'
+        help='Show what would be changed without creating the output file'
     )
     
     args = parser.parse_args()
     
     success = clean_sql_file(
         args.filename,
-        backup=not args.no_backup,
+        output_filename=args.output,
         dry_run=args.dry_run
     )
     
