@@ -10,15 +10,12 @@ This script analyzes large-scale database experiment results comparing:
 Optimized for handling large JSON files (up to 1000KB, 40k+ lines).
 """
 
-import json
-import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Generator
-import glob
 import warnings
 import gc
 import psutil
@@ -513,7 +510,7 @@ class ExperimentAnalyzer:
                 if data['infinite_speedups'] > 0:
                     print(f"    Infinite speedups: {data['infinite_speedups']:,}")
     
-    def create_visualizations_optimized(self, output_dir: str = "analysis_plots", 
+    def create_visualizations_optimized(self, output_dir: str = "/app/all_data/baseball/analysis/analysis_plots", 
                                       sample_size: int = 10000) -> None:
         """
         Create visualizations with sampling for large datasets.
@@ -527,7 +524,7 @@ class ExperimentAnalyzer:
             return
         
         output_path = Path(output_dir)
-        output_path.mkdir(exist_ok=True)
+        output_path.mkdir(parents=True, exist_ok=True)
         
         df_times = self.analysis_results['execution_times']
         df_speedups = self.analysis_results['speedups']
@@ -597,7 +594,7 @@ class ExperimentAnalyzer:
         logger.info(f"Visualizations saved to {output_path}")
         plt.close('all')  # Free memory
     
-    def export_results_chunked(self, output_file: str = "experiment_analysis.xlsx",
+    def export_results_chunked(self, output_file: str = "/app/all_data/baseball/analysis/experiment_analysis.xlsx",
                              chunk_size: int = 50000) -> None:
         """
         Export results to Excel in chunks to handle large datasets.
