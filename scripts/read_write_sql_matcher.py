@@ -185,7 +185,9 @@ def build_write_index_smart(write_file: str, max_writes_per_table: int = 100) ->
 def process_with_limits(select_file: str, write_file: str, 
                        max_writes_per_table: int = 100,
                        max_matches_per_select: int = 50,
-                       max_total_matches: int = 100000) -> None:
+                       max_total_matches: int = 100000,
+                       experiment_dir: str = '/app/data/experiments',
+                       output_file: str = '/app/data/matches.csv') -> None:
     """Process with strict limits to prevent explosion."""
     
     total_selects = count_statements(select_file)
@@ -200,11 +202,9 @@ def process_with_limits(select_file: str, write_file: str,
     print(f"  Max total matches: {max_total_matches}")
     
     # Create output directory for experiment SQL files
-    experiment_dir = '/app/data/experiments'
     os.makedirs(experiment_dir, exist_ok=True)
     
     # Open output file with explicit encoding and proper CSV settings
-    output_file = '/app/data/matches.csv'
     with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
         fieldnames = ['select_id', 'select_tables', 
                      'write_id', 'write_tables', 'common_tables']
@@ -403,12 +403,16 @@ def main():
     parser = argparse.ArgumentParser(description='Match SQL statements with smart limits')
     parser.add_argument('--select_file', required=True, help='File containing SELECT statements')
     parser.add_argument('--write_file', required=True, help='File containing INSERT/UPDATE/DELETE statements')
-    parser.add_argument('--max-writes-per-table', type=int, default=20, 
-                       help='Max write statements per table (default: 20)')
+    parser.add_argument('--max-writes-per-table', type=int, default=1000, 
+                       help='Max write statements per table (default: 1000)')
     parser.add_argument('--max-matches-per-select', type=int, default=20, 
                        help='Max matches per SELECT statement (default: 20)')
-    parser.add_argument('--max-total-matches', type=int, default=50000, 
-                       help='Max total matches to find (default: 50000)')
+    parser.add_argument('--max-total-matches', type=int, default=20000, 
+                       help='Max total matches to find (default: 20000)')
+    parser.add_argument('--experiment-dir', type=str, default='/app/data/experiments',
+                       help='Directory to save experiment SQL files (default: /app/data/experiments)')
+    parser.add_argument('--output-file', type=str, default='/app/data/matches.csv',
+                       help='Output CSV file for matches (default: /app/data/matches.csv)')
     parser.add_argument('--analysis-only', action='store_true', 
                        help='Only run analysis, do not process matches')
     
@@ -427,11 +431,15 @@ def main():
         print(f"  Max writes per table: {args.max_writes_per_table}")
         print(f"  Max matches per SELECT: {args.max_matches_per_select}")
         print(f"  Max total matches: {args.max_total_matches}")
+        print(f"  Experiment directory: {args.experiment_dir}")
+        print(f"  Output file: {args.output_file}")
         
         process_with_limits(args.select_file, args.write_file,
                           args.max_writes_per_table,
                           args.max_matches_per_select,
-                          args.max_total_matches)
+                          args.max_total_matches,
+                          args.experiment_dir,
+                          args.output_file)
 
 if __name__ == "__main__":
     main()
