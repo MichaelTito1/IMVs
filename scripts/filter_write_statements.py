@@ -52,7 +52,8 @@ def filter_write_statements(input_file, output_file, output_format='csv'):
         sql = stmt.get('sql', '').strip()
         if sql:
             cleaned_sql = remove_table_suffixes(sql)
-            stmt['sql'] = add_suffix_to_sql(cleaned_sql)
+            # stmt['sql'] = add_suffix_to_sql(cleaned_sql)
+            stmt['sql'] = cleaned_sql
     
     # Deduplicate by cleaned SQL
     unique = []
