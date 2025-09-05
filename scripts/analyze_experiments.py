@@ -510,7 +510,7 @@ class ExperimentAnalyzer:
                 if data['infinite_speedups'] > 0:
                     print(f"    Infinite speedups: {data['infinite_speedups']:,}")
     
-    def create_visualizations_optimized(self, output_dir: str = "/app/all_data/baseball/analysis/analysis_plots", 
+    def create_visualizations_optimized(self, output_dir: str = "/app/all_data/walmart/analysis/analysis_plots", 
                                       sample_size: int = 10000) -> None:
         """
         Create visualizations with sampling for large datasets.
@@ -594,7 +594,7 @@ class ExperimentAnalyzer:
         logger.info(f"Visualizations saved to {output_path}")
         plt.close('all')  # Free memory
     
-    def export_results_chunked(self, output_file: str = "/app/all_data/baseball/analysis/experiment_analysis.xlsx",
+    def export_results_chunked(self, output_file: str = "/app/all_data/walmart/analysis/experiment_analysis.xlsx",
                              chunk_size: int = 50000) -> None:
         """
         Export results to Excel in chunks to handle large datasets.
@@ -656,7 +656,7 @@ class ExperimentAnalyzer:
 def main():
     """Main function to run the analysis."""
     # Initialize analyzer with optimizations
-    analyzer = ExperimentAnalyzer("/app/all_data/baseball/experiments", chunk_size=1000)
+    analyzer = ExperimentAnalyzer("/app/all_data/walmart/experiments", chunk_size=1000)
     
     # Run analysis
     logger.info("Starting experiment analysis...")
